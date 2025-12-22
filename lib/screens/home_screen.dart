@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../models/manga.dart';
-import '../providers/manga_provider.dart';
-import '../providers/favorites_provider.dart';
-import '../widgets/manga_grid.dart';
+import '../providers/catalog_provider.dart';
 import '../widgets/continue_reading_section.dart';
-import '../screens/manga_reader_screen.dart';
-import '../widgets/manga_card.dart';
+import '../widgets/manga_grid.dart';
+import 'manga_reader_screen.dart';
 
 class MangaSearchDelegate extends SearchDelegate<Manga?> {
   @override
@@ -35,9 +34,7 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
     return [
       IconButton(
         icon: const Icon(Icons.clear),
-        onPressed: () {
-          query = '';
-        },
+        onPressed: () => query = '',
       ),
     ];
   }
@@ -46,9 +43,7 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
   Widget buildLeading(BuildContext context) {
     return IconButton(
       icon: const Icon(Icons.arrow_back),
-      onPressed: () {
-        close(context, null);
-      },
+      onPressed: () => close(context, null),
     );
   }
 
@@ -58,10 +53,11 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
       color: Colors.black87,
       child: Center(
         child: Text(
-          query.isEmpty 
+          query.isEmpty
               ? 'Enter a manga title to search'
               : 'Search results coming soon!',
           style: const TextStyle(color: Colors.white70),
+          textAlign: TextAlign.center,
         ),
       ),
     );
@@ -73,10 +69,11 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
       color: Colors.black87,
       child: Center(
         child: Text(
-          query.isEmpty 
+          query.isEmpty
               ? 'Enter a manga title to search'
               : 'Search suggestions coming soon!',
           style: const TextStyle(color: Colors.white70),
+          textAlign: TextAlign.center,
         ),
       ),
     );
@@ -98,7 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        context.read<MangaProvider>().fetchMangas(refresh: true);
+        context.read<CatalogProvider>().loadPopular();
       }
     });
   }
@@ -118,7 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: Consumer<MangaProvider>(
+        body: Consumer<CatalogProvider>(
           builder: (context, provider, child) {
             return CustomScrollView(
               slivers: [
@@ -130,7 +127,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   actions: [
                     IconButton(
                       icon: Icon(
-                        _showOnlyFavorites ? Icons.favorite : Icons.favorite_border,
+                        _showOnlyFavorites
+                            ? Icons.favorite
+                            : Icons.favorite_border,
                         color: _showOnlyFavorites ? Colors.red : null,
                       ),
                       onPressed: () {
@@ -150,9 +149,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => MangaReaderScreen(
-                                manga: selectedManga,
-                              ),
+                              builder: (context) =>
+                                  MangaReaderScreen(manga: selectedManga),
                             ),
                           );
                         }
@@ -160,6 +158,28 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
+
+                const SliverToBoxAdapter(
+                  child: ContinueReadingSection(),
+                ),
+
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16.0,
+                      vertical: 8.0,
+                    ),
+                    child: Text(
+                      'Popular Manga',
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                    ),
+                  ),
+                ),
+
+                // Initial loading state
                 if (provider.isLoading && provider.mangas.isEmpty)
                   const SliverToBoxAdapter(
                     child: Center(
@@ -168,8 +188,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: CircularProgressIndicator(),
                       ),
                     ),
-                  )
-                else if (provider.error != null && provider.mangas.isEmpty)
+                  ),
+
+                // Initial error state
+                if (provider.error != null && provider.mangas.isEmpty)
                   SliverToBoxAdapter(
                     child: Center(
                       child: Padding(
@@ -184,38 +206,38 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                             const SizedBox(height: 16),
                             ElevatedButton(
-                              onPressed: () => provider.fetchMangas(refresh: true),
+                              onPressed: () => provider.loadPopular(),
                               child: const Text('Retry'),
                             ),
                           ],
                         ),
                       ),
                     ),
-                  )
-                else ...[
-                  const SliverToBoxAdapter(
-                    child: ContinueReadingSection(),
                   ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 8.0,
-                      ),
-                      child: Text(
-                        'Popular Manga',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                    ),
-                  ),
+
+                // Main grid (Firestore-backed)
+                if (provider.mangas.isNotEmpty)
                   SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     sliver: MangaGrid(showOnlyFavorites: _showOnlyFavorites),
                   ),
-                ],
+
+                // If empty but not loading and no error:
+                if (!provider.isLoading &&
+                    provider.error == null &&
+                    provider.mangas.isEmpty)
+                  const SliverToBoxAdapter(
+                    child: Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(16.0),
+                        child: Text(
+                          'No manga found in Firestore catalog.',
+                          style: TextStyle(color: Colors.white70),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ),
+                  ),
               ],
             );
           },

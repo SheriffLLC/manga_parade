@@ -1,30 +1,42 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'screens/home_screen.dart';
-import 'screens/search_screen.dart';
-import 'providers/manga_provider.dart';
+
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
+
+import 'providers/catalog_provider.dart';
 import 'providers/favorites_provider.dart';
 import 'providers/search_provider.dart';
 import 'providers/read_chapters_provider.dart';
 import 'providers/reading_history_provider.dart';
+
+import 'screens/search_screen.dart';
 import 'services/mangakakalot_service.dart';
 import 'widgets/manga_card.dart';
 import 'widgets/continue_reading_grid.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   final prefs = await SharedPreferences.getInstance();
   final mangakakalotService = MangaKakalotService();
-  
+
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => MangaProvider()),
+        ChangeNotifierProvider(create: (_) => CatalogProvider()),
         ChangeNotifierProvider(create: (_) => FavoritesProvider(prefs: prefs)),
-        ChangeNotifierProvider(create: (_) => SearchProvider(mangakakalotService)),
-        ChangeNotifierProvider(create: (_) => ReadChaptersProvider(prefs: prefs)),
-        ChangeNotifierProvider(create: (_) => ReadingHistoryProvider(prefs: prefs)),
+        ChangeNotifierProvider(
+            create: (_) => SearchProvider(mangakakalotService)),
+        ChangeNotifierProvider(
+            create: (_) => ReadChaptersProvider(prefs: prefs)),
+        ChangeNotifierProvider(
+            create: (_) => ReadingHistoryProvider(prefs: prefs)),
       ],
       child: const MyApp(),
     ),
@@ -44,7 +56,9 @@ class MyApp extends StatelessWidget {
           backgroundColor: Colors.black.withOpacity(0.3),
           elevation: 0,
         ),
-        cardTheme: CardTheme(
+
+        // IMPORTANT: Flutter expects CardThemeData (not CardTheme)
+        cardTheme: CardThemeData(
           color: Colors.black.withOpacity(0.5),
           elevation: 4,
           shape: RoundedRectangleBorder(
@@ -73,10 +87,10 @@ class GradientBackground extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Color(0xFF1A1A2E), // Deep navy blue
-            Color(0xFF16213E), // Rich dark blue
-            Color(0xFF0F3460), // Deep purple-blue
-            Color(0xFF1B1B1B), // Almost black
+            Color(0xFF1A1A2E),
+            Color(0xFF16213E),
+            Color(0xFF0F3460),
+            Color(0xFF1B1B1B),
           ],
         ),
       ),
@@ -92,17 +106,19 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin {
+class _HomePageState extends State<HomePage>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 4, vsync: this);
-    // Load manga list after the frame is built
+
+    // Load Firestore catalog after the frame is built
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        context.read<MangaProvider>().fetchMangas();
+        context.read<CatalogProvider>().refresh();
       }
     });
   }
@@ -144,89 +160,145 @@ class _HomePageState extends State<HomePage> with SingleTickerProviderStateMixin
         controller: _tabController,
         children: const [
           ContinueReadingGrid(),
-          MangaGrid(showOnlyFavorites: false),
+          CatalogGrid(showOnlyFavorites: false),
           SearchScreen(),
-          MangaGrid(showOnlyFavorites: true),
+          CatalogGrid(showOnlyFavorites: true),
         ],
       ),
     );
   }
 }
 
-class MangaGrid extends StatefulWidget {
+/// Firestore-backed grid (Step 1: no pagination yet)
+class CatalogGrid extends StatefulWidget {
   final bool showOnlyFavorites;
 
-  const MangaGrid({super.key, required this.showOnlyFavorites});
+  const CatalogGrid({super.key, required this.showOnlyFavorites});
 
   @override
-  State<MangaGrid> createState() => _MangaGridState();
+  State<CatalogGrid> createState() => _CatalogGridState();
 }
 
-class _MangaGridState extends State<MangaGrid> {
+class _CatalogGridState extends State<CatalogGrid> {
   final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
+
     _scrollController.addListener(_onScroll);
+
+    // If user lands on this tab first, make sure we have data
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final catalog = context.read<CatalogProvider>();
+      if (catalog.mangas.isEmpty && !catalog.isLoading) {
+        catalog.refresh();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
   void _onScroll() {
-    if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent * 0.8) {
-      final mangaProvider = context.read<MangaProvider>();
-      if (!mangaProvider.isLoading && mangaProvider.hasMorePages) {
-        mangaProvider.fetchMangas();
+    // Load next page when 80% down
+    if (_scrollController.position.pixels >=
+        _scrollController.position.maxScrollExtent * 0.8) {
+      final catalog = context.read<CatalogProvider>();
+      if (!catalog.isLoading && catalog.hasMore) {
+        catalog.fetchNextPage();
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final mangaProvider = context.watch<MangaProvider>();
-    final favoritesProvider = context.watch<FavoritesProvider>();
-    final mangas = mangaProvider.mangas;
+    final catalog = context.watch<CatalogProvider>();
+    final favorites = context.watch<FavoritesProvider>();
 
-    if (mangas.isEmpty && mangaProvider.isLoading) {
+    final all = catalog.mangas;
+
+    final displayed = widget.showOnlyFavorites
+        ? all.where((m) => favorites.isFavorite(m)).toList()
+        : all;
+
+    if (catalog.isLoading && all.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final displayedMangas = widget.showOnlyFavorites
-        ? favoritesProvider.favorites
-        : mangas;
-
-    return Stack(
-      children: [
-        GridView.builder(
-          controller: _scrollController,
-          padding: const EdgeInsets.all(8.0),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: 0.7,
-            crossAxisSpacing: 8.0,
-            mainAxisSpacing: 8.0,
+    if (catalog.error != null && all.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Firestore error:\n${catalog.error}',
+                style: const TextStyle(color: Colors.red),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              ElevatedButton(
+                onPressed: () => context.read<CatalogProvider>().refresh(),
+                child: const Text('Retry'),
+              )
+            ],
           ),
-          itemCount: displayedMangas.length,
-          itemBuilder: (context, index) {
-            final manga = displayedMangas[index];
-            return MangaCard(manga: manga);
-          },
         ),
-        if (mangaProvider.isLoading)
-          const Positioned(
-            bottom: 16.0,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: CircularProgressIndicator(),
-            ),
-          ),
-      ],
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: () => context.read<CatalogProvider>().refresh(),
+      child: GridView.builder(
+        controller: _scrollController,
+        padding: const EdgeInsets.all(8.0),
+        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          childAspectRatio: 0.7,
+          crossAxisSpacing: 8.0,
+          mainAxisSpacing: 8.0,
+        ),
+        itemCount: displayed.length + 1, // +1 for footer loader / end text
+        itemBuilder: (context, index) {
+          if (index < displayed.length) {
+            final manga = displayed[index];
+            return MangaCard(manga: manga);
+          }
+
+          // Footer slot
+          if (widget.showOnlyFavorites) {
+            return const SizedBox.shrink();
+          }
+
+          if (catalog.isLoading) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            );
+          }
+
+          if (!catalog.hasMore) {
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(
+                child: Text(
+                  'That’s the whole parade 🎉',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              ),
+            );
+          }
+
+          return const SizedBox.shrink();
+        },
+      ),
     );
   }
 }

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "546635380848",
+    "project_id": "manga-world-project",
+    "storage_bucket": "manga-world-project.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:546635380848:android:f34f1373e0bb5f14299cb5",
+        "android_client_info": {
+          "package_name": "com.example.manga_parade"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCy89Zznb489AX9zcd7HYBoACuXSzaEMkE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
