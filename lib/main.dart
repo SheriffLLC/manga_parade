@@ -11,6 +11,7 @@ import 'providers/search_provider.dart';
 import 'providers/read_chapters_provider.dart';
 import 'providers/reading_history_provider.dart';
 
+import 'screens/home_tab.dart';
 import 'screens/search_screen.dart';
 import 'services/mangakakalot_service.dart';
 import 'widgets/manga_card.dart';
@@ -159,7 +160,7 @@ class _HomePageState extends State<HomePage>
       body: TabBarView(
         controller: _tabController,
         children: const [
-          ContinueReadingGrid(),
+          HomeTab(),
           CatalogGrid(showOnlyFavorites: false),
           SearchScreen(),
           CatalogGrid(showOnlyFavorites: true),

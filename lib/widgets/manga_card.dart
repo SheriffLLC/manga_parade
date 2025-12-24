@@ -11,7 +11,7 @@ class MangaCard extends StatelessWidget {
   final String? subtitle;
 
   const MangaCard({
-    super.key, 
+    super.key,
     required this.manga,
     this.onTap,
     this.subtitle,
@@ -19,20 +19,22 @@ class MangaCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final heroTag = 'manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
     return Card(
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(8),
       ),
       child: InkWell(
-        onTap: onTap ?? () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => MangaReaderScreen(manga: manga),
-            ),
-          );
-        },
+        onTap: onTap ??
+            () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => MangaReaderScreen(manga: manga),
+                ),
+              );
+            },
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -41,7 +43,7 @@ class MangaCard extends StatelessWidget {
                 fit: StackFit.expand,
                 children: [
                   Hero(
-                    tag: 'manga_cover_${manga.id}',
+                    tag: heroTag,
                     child: MangaImage(
                       imageUrl: manga.coverUrl,
                       fit: BoxFit.cover,
@@ -54,19 +56,17 @@ class MangaCard extends StatelessWidget {
                       builder: (context, favoritesProvider, child) {
                         final isFavorite = favoritesProvider.isFavorite(manga);
                         return CircleAvatar(
-                          backgroundColor: Theme.of(context).colorScheme.surface,
+                          backgroundColor:
+                              Theme.of(context).colorScheme.surface,
                           child: IconButton(
                             icon: Icon(
-                              isFavorite ? Icons.favorite : Icons.favorite_border,
+                              isFavorite
+                                  ? Icons.favorite
+                                  : Icons.favorite_border,
                               color: isFavorite ? Colors.red : null,
                             ),
-                            onPressed: () {
-                              if (isFavorite) {
-                                favoritesProvider.removeFavorite(manga);
-                              } else {
-                                favoritesProvider.addFavorite(manga);
-                              }
-                            },
+                            onPressed: () =>
+                                favoritesProvider.toggleFavorite(manga),
                           ),
                         );
                       },
@@ -97,7 +97,10 @@ class MangaCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.7),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withOpacity(0.7),
                       ),
                     ),
                   ],
@@ -107,7 +110,9 @@ class MangaCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         if (manga.volumes != null) ...[
-                          Icon(Icons.book, size: 12, color: Theme.of(context).colorScheme.primary),
+                          Icon(Icons.book,
+                              size: 12,
+                              color: Theme.of(context).colorScheme.primary),
                           const SizedBox(width: 2),
                           Text(
                             manga.volumes!,
@@ -119,7 +124,9 @@ class MangaCard extends StatelessWidget {
                           const SizedBox(width: 8),
                         ],
                         if (manga.chapters != null) ...[
-                          Icon(Icons.menu_book, size: 12, color: Theme.of(context).colorScheme.primary),
+                          Icon(Icons.menu_book,
+                              size: 12,
+                              color: Theme.of(context).colorScheme.primary),
                           const SizedBox(width: 2),
                           Text(
                             manga.chapters!,

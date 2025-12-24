@@ -1,0 +1,84 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/catalog_provider.dart';
+import 'manga_card.dart';
+
+class RecentlyUpdatedRail extends StatelessWidget {
+  const RecentlyUpdatedRail({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Builder(
+          builder: (context) {
+            final catalog = context.watch<CatalogProvider>();
+
+            if (catalog.isLoadingRecentlyUpdated &&
+                catalog.recentlyUpdated.isEmpty) {
+              return const SizedBox(
+                height: 220,
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+
+            if (catalog.recentlyUpdatedError != null &&
+                catalog.recentlyUpdated.isEmpty) {
+              return Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  catalog.recentlyUpdatedError!,
+                  style: const TextStyle(color: Colors.red),
+                ),
+              );
+            }
+
+            final items = catalog.recentlyUpdated;
+            if (items.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text(
+                  'No recent updates yet.',
+                  style: TextStyle(color: Colors.white70),
+                ),
+              );
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  child: Text(
+                    'Recently Updated',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                SizedBox(
+                  height: 240,
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    scrollDirection: Axis.horizontal,
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, i) {
+                      final m = items[i];
+                      return SizedBox(
+                        width: 160,
+                        child: MangaCard(
+                          manga: m,
+                          onTap: null,
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
