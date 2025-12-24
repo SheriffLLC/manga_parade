@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../widgets/continue_reading_grid.dart';
+import '../widgets/most_popular_rail.dart';
 import '../widgets/recently_updated_rail.dart';
 
 class HomeTab extends StatelessWidget {
@@ -25,6 +26,9 @@ class HomeTab extends StatelessWidget {
         // Rail should appear even if ContinueReadingGrid is empty
         SizedBox(height: 12),
         RecentlyUpdatedRail(),
+
+        SizedBox(height: 12),
+        MostPopularRail(),
       ],
     );
   }

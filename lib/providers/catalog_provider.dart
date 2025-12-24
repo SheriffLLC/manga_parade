@@ -134,16 +134,173 @@ class CatalogProvider extends ChangeNotifier {
   }
 
   // -----------------------------
+  // MOST POPULAR (rail)
+  // -----------------------------
+  final List<Manga> _mostPopular = [];
+  bool _isLoadingMostPopular = false;
+  String? _mostPopularError;
+
+  List<Manga> get mostPopular => List.unmodifiable(_mostPopular);
+  bool get isLoadingMostPopular => _isLoadingMostPopular;
+  String? get mostPopularError => _mostPopularError;
+
+  Future<void> loadMostPopular({int limit = 20}) async {
+    if (_isLoadingMostPopular) return;
+
+    _isLoadingMostPopular = true;
+    _mostPopularError = null;
+    notifyListeners();
+
+    try {
+      final snap = await _db
+          .collection('manga')
+          .orderBy('catalogScore', descending: true)
+          .limit(limit)
+          .get();
+
+      _mostPopular
+        ..clear()
+        ..addAll(
+            snap.docs.map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d))));
+    } catch (e) {
+      _mostPopularError = 'Failed to load Most Popular: $e';
+    } finally {
+      _isLoadingMostPopular = false;
+      notifyListeners();
+    }
+  }
+
+  // -----------------------------
+  // VIEW ALL: RECENTLY UPDATED (paginated)
+  // -----------------------------
+  final List<Manga> _recentlyUpdatedAll = [];
+  DocumentSnapshot<Map<String, dynamic>>? _recentlyUpdatedAllLastDoc;
+  bool _isLoadingRecentlyUpdatedAll = false;
+  bool _hasMoreRecentlyUpdatedAll = true;
+  String? _recentlyUpdatedAllError;
+
+  List<Manga> get recentlyUpdatedAll => List.unmodifiable(_recentlyUpdatedAll);
+  bool get isLoadingRecentlyUpdatedAll => _isLoadingRecentlyUpdatedAll;
+  bool get hasMoreRecentlyUpdatedAll => _hasMoreRecentlyUpdatedAll;
+  String? get recentlyUpdatedAllError => _recentlyUpdatedAllError;
+
+  Future<void> resetRecentlyUpdatedAll() async {
+    _recentlyUpdatedAll.clear();
+    _recentlyUpdatedAllLastDoc = null;
+    _hasMoreRecentlyUpdatedAll = true;
+    _recentlyUpdatedAllError = null;
+    notifyListeners();
+    await fetchNextRecentlyUpdatedAllPage();
+  }
+
+  Future<void> fetchNextRecentlyUpdatedAllPage({int pageSize = 30}) async {
+    if (_isLoadingRecentlyUpdatedAll || !_hasMoreRecentlyUpdatedAll) return;
+
+    _isLoadingRecentlyUpdatedAll = true;
+    _recentlyUpdatedAllError = null;
+    notifyListeners();
+
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('manga')
+          .orderBy('updatedAt', descending: true)
+          .limit(pageSize);
+
+      if (_recentlyUpdatedAllLastDoc != null) {
+        q = q.startAfterDocument(_recentlyUpdatedAllLastDoc!);
+      }
+
+      final snap = await q.get();
+      if (snap.docs.isNotEmpty) {
+        _recentlyUpdatedAllLastDoc = snap.docs.last;
+        for (final doc in snap.docs) {
+          _recentlyUpdatedAll.add(Manga.fromJson(_withDocIdAndCleanUrl(doc)));
+        }
+      }
+
+      if (snap.docs.length < pageSize) {
+        _hasMoreRecentlyUpdatedAll = false;
+      }
+    } catch (e) {
+      _recentlyUpdatedAllError = 'Failed to load Recently Updated: $e';
+    } finally {
+      _isLoadingRecentlyUpdatedAll = false;
+      notifyListeners();
+    }
+  }
+
+  // -----------------------------
+  // VIEW ALL: MOST POPULAR (paginated)
+  // -----------------------------
+  final List<Manga> _mostPopularAll = [];
+  DocumentSnapshot<Map<String, dynamic>>? _mostPopularAllLastDoc;
+  bool _isLoadingMostPopularAll = false;
+  bool _hasMoreMostPopularAll = true;
+  String? _mostPopularAllError;
+
+  List<Manga> get mostPopularAll => List.unmodifiable(_mostPopularAll);
+  bool get isLoadingMostPopularAll => _isLoadingMostPopularAll;
+  bool get hasMoreMostPopularAll => _hasMoreMostPopularAll;
+  String? get mostPopularAllError => _mostPopularAllError;
+
+  Future<void> resetMostPopularAll() async {
+    _mostPopularAll.clear();
+    _mostPopularAllLastDoc = null;
+    _hasMoreMostPopularAll = true;
+    _mostPopularAllError = null;
+    notifyListeners();
+    await fetchNextMostPopularAllPage();
+  }
+
+  Future<void> fetchNextMostPopularAllPage({int pageSize = 30}) async {
+    if (_isLoadingMostPopularAll || !_hasMoreMostPopularAll) return;
+
+    _isLoadingMostPopularAll = true;
+    _mostPopularAllError = null;
+    notifyListeners();
+
+    try {
+      Query<Map<String, dynamic>> q = _db
+          .collection('manga')
+          .orderBy('catalogScore', descending: true)
+          .limit(pageSize);
+
+      if (_mostPopularAllLastDoc != null) {
+        q = q.startAfterDocument(_mostPopularAllLastDoc!);
+      }
+
+      final snap = await q.get();
+      if (snap.docs.isNotEmpty) {
+        _mostPopularAllLastDoc = snap.docs.last;
+        for (final doc in snap.docs) {
+          _mostPopularAll.add(Manga.fromJson(_withDocIdAndCleanUrl(doc)));
+        }
+      }
+
+      if (snap.docs.length < pageSize) {
+        _hasMoreMostPopularAll = false;
+      }
+    } catch (e) {
+      _mostPopularAllError = 'Failed to load Most Popular: $e';
+    } finally {
+      _isLoadingMostPopularAll = false;
+      notifyListeners();
+    }
+  }
+
+  // -----------------------------
   // REFRESH HOME
   // -----------------------------
   Future<void> refreshHome() async {
     _mangas.clear();
     _recentlyUpdated.clear();
+    _mostPopular.clear();
     _lastDoc = null;
     _hasMore = true;
 
     await Future.wait([
       loadRecentlyUpdated(),
+      loadMostPopular(),
       fetchNextPage(),
     ]);
   }

@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/catalog_provider.dart';
-import 'manga_card.dart';
+import '../screens/view_all_screen.dart';
+import 'rail_manga_card.dart';
 
 class RecentlyUpdatedRail extends StatelessWidget {
   const RecentlyUpdatedRail({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final isTablet = MediaQuery.of(context).size.shortestSide >= 600;
+    final cardWidth = isTablet ? 190.0 : 160.0;
+    final railHeight = isTablet ? 280.0 : 240.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -48,15 +53,37 @@ class RecentlyUpdatedRail extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  child: Text(
-                    'Recently Updated',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Recently Updated',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const ViewAllScreen(
+                                type: ViewAllType.recentlyUpdated,
+                              ),
+                            ),
+                          );
+                        },
+                        child: const Text('View all'),
+                      ),
+                    ],
                   ),
                 ),
                 SizedBox(
-                  height: 240,
+                  height: railHeight,
                   child: ListView.separated(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     scrollDirection: Axis.horizontal,
@@ -65,11 +92,8 @@ class RecentlyUpdatedRail extends StatelessWidget {
                     itemBuilder: (context, i) {
                       final m = items[i];
                       return SizedBox(
-                        width: 160,
-                        child: MangaCard(
-                          manga: m,
-                          onTap: null,
-                        ),
+                        width: cardWidth,
+                        child: RailMangaCard(manga: m),
                       );
                     },
                   ),
