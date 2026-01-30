@@ -14,6 +14,10 @@ class FavoritesProvider extends ChangeNotifier {
 
   bool isFavorite(Manga manga) => _favoriteIds.contains(manga.id);
 
+  void addFavorite(Manga manga) => toggleFavorite(manga);
+
+  void removeFavorite(Manga manga) => toggleFavorite(manga);
+
   void toggleFavorite(Manga manga) {
     if (_favoriteIds.contains(manga.id)) {
       _favoriteIds.remove(manga.id);

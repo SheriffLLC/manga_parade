@@ -74,6 +74,156 @@ function extractTitleFromAlt(alt: string): string {
   return alt.replace(/\s*-\s*.*?cover image\s*$/i, "").trim();
 }
 
+interface ChapterItem {
+  id: string;
+  chapterNumber: string;
+  title: string;
+  sourceUrl: string;
+  publishedAt?: string;
+  index: number;
+}
+
+function parseChapterNumberFromUrl(url: string): string {
+  const m = url.match(/chapter-([\d]+(?:[-.]\d+)?)/i);
+  if (!m) return "";
+  return m[1].replace("-", ".");
+}
+
+function chapterIndex(num: string, fallback: number): number {
+  const n = Number(num);
+  return Number.isFinite(n) ? Math.round(n * 1000) : fallback;
+}
+
+async function fetchQiscansChapters(seriesUrl: string, limit = 500): Promise<ChapterItem[]> {
+  const res = await fetch(seriesUrl, {
+    headers: { "User-Agent": "MangaParadeBot/1.0 (+firebase-functions)" },
+  });
+  if (!res.ok) throw new Error(`QiScans series HTTP ${res.status}`);
+
+  const html = await res.text();
+  const $ = cheerio.load(html);
+
+  const links = Array.from($("a[href*='/chapter-']"))
+    .map((a) => String($(a).attr("href") || "").trim())
+    .filter(Boolean);
+
+  const base = "https://qiscans.org";
+  const seen = new Set<string>();
+  const items: ChapterItem[] = [];
+
+  for (const href of links) {
+    const url = absUrl(base, href);
+
+    if (!url.includes("/series/") || !url.includes("/chapter-")) continue;
+
+    if (seen.has(url)) continue;
+    seen.add(url);
+
+    const num = parseChapterNumberFromUrl(url);
+    const titleText = String($(`a[href="${href}"]`).text() || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    const title = titleText || (num ? `Chapter ${num}` : "Chapter");
+
+    const id = `qiscans_${Buffer.from(url).toString("base64url")}`;
+    const idx = chapterIndex(num, 0);
+
+    items.push({
+      id,
+      chapterNumber: num || "",
+      title,
+      sourceUrl: url,
+      index: idx,
+    });
+
+    if (items.length >= limit) break;
+  }
+
+  items.sort((a, b) => b.index - a.index);
+
+  let fallback = items.length * 10;
+  for (const it of items) {
+    if (!it.index) it.index = fallback--;
+  }
+
+  return items;
+}
+
+async function fetchMangadexChapters(mangaUrl: string, limit = 500): Promise<ChapterItem[]> {
+  const mdId = mangaUrl.split("/title/")[1]?.split(/[/?#]/)[0];
+  if (!mdId) throw new Error("Could not parse MangaDex id from sourceUrl");
+
+  const api =
+    `https://api.mangadex.org/manga/${mdId}/feed?limit=${Math.min(limit, 500)}` +
+    "&order[chapter]=desc&translatedLanguage[]=en";
+  const res = await fetch(api, { headers: { Accept: "application/json" } });
+  if (!res.ok) throw new Error(`MangaDex feed HTTP ${res.status}`);
+
+  const json: any = await res.json();
+  const data: any[] = Array.isArray(json?.data) ? json.data : [];
+
+  const items: ChapterItem[] = data.map((ch) => {
+    const id = `mangadex_ch_${String(ch.id)}`;
+    const attrs = ch.attributes || {};
+    const num = String(attrs.chapter || "");
+    const title = String(attrs.title || (num ? `Chapter ${num}` : "Chapter"));
+    const sourceUrl = `https://mangadex.org/chapter/${String(ch.id)}`;
+    const idx = chapterIndex(num, 0);
+
+    return {
+      id,
+      chapterNumber: num,
+      title,
+      sourceUrl,
+      publishedAt: typeof attrs.publishAt === "string" ? attrs.publishAt : undefined,
+      index: idx || 0,
+    };
+  });
+
+  items.sort((a, b) => b.index - a.index);
+
+  let fallback = items.length * 10;
+  for (const it of items) {
+    if (!it.index) it.index = fallback--;
+  }
+
+  return items;
+}
+
+async function upsertChapters(mangaId: string, source: SourceType, chapters: ChapterItem[]) {
+  const batch = db.batch();
+
+  for (const ch of chapters) {
+    const ref = db.collection("manga").doc(mangaId).collection("chapters").doc(ch.id);
+
+    batch.set(
+      ref,
+      {
+        source,
+        chapterNumber: ch.chapterNumber,
+        title: ch.title,
+        sourceUrl: ch.sourceUrl,
+        publishedAt: ch.publishedAt ? new Date(ch.publishedAt) : null,
+        index: ch.index,
+        lastSyncedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+  }
+
+  const parentRef = db.collection("manga").doc(mangaId);
+  batch.set(
+    parentRef,
+    {
+      chaptersCount: chapters.length,
+      lastChaptersSyncedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+
+  await batch.commit();
+}
+
 // -------------------------
 // QISCANS SCRAPE
 // You provided:
@@ -261,6 +411,37 @@ export const syncRailsToFirestore = onSchedule("every 30 minutes", async () => {
     qPopular: qPopular.length,
     mdRecent: mdRecent.length,
     mdPopular: mdPopular.length,
+  });
+});
+
+export const syncChaptersToFirestore = onRequest((req, res) => {
+  corsMiddleware(req, res, async () => {
+    try {
+      const mangaId = String(req.query.mangaId || "").trim();
+      if (!mangaId) return res.status(400).json({ error: "Missing mangaId" });
+
+      const doc = await db.collection("manga").doc(mangaId).get();
+      if (!doc.exists) return res.status(404).json({ error: "Manga not found" });
+
+      const data = doc.data() || {};
+      const source = String(data.source || "") as SourceType;
+      const sourceUrl = String(data.sourceUrl || "");
+
+      if (!source || !sourceUrl) {
+        return res.status(400).json({ error: "Manga doc missing source/sourceUrl" });
+      }
+
+      let chapters: ChapterItem[] = [];
+      if (source === "qiscans") chapters = await fetchQiscansChapters(sourceUrl);
+      else chapters = await fetchMangadexChapters(sourceUrl);
+
+      await upsertChapters(mangaId, source, chapters);
+
+      return res.json({ ok: true, mangaId, source, count: chapters.length });
+    } catch (e: any) {
+      logger.error("syncChaptersToFirestore failed", e);
+      return res.status(500).json({ error: String(e?.message || e) });
+    }
   });
 });
 

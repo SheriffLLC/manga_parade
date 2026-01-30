@@ -31,7 +31,7 @@ class MangaCard extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => MangaReaderScreen(manga: manga),
+                  builder: (_) => MangaReaderScreen(manga: manga),
                 ),
               );
             },

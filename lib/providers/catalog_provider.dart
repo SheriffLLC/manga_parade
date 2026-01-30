@@ -144,6 +144,8 @@ class CatalogProvider extends ChangeNotifier {
   bool get isLoadingMostPopular => _isLoadingMostPopular;
   String? get mostPopularError => _mostPopularError;
 
+  Future<void> loadPopular({int limit = 20}) => loadMostPopular(limit: limit);
+
   Future<void> loadMostPopular({int limit = 20}) async {
     if (_isLoadingMostPopular) return;
 

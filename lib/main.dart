@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
 import 'providers/catalog_provider.dart';
+import 'providers/chapters_providers.dart';
 import 'providers/favorites_provider.dart';
 import 'providers/search_provider.dart';
 import 'providers/read_chapters_provider.dart';
@@ -15,7 +16,6 @@ import 'screens/home_tab.dart';
 import 'screens/search_screen.dart';
 import 'services/mangakakalot_service.dart';
 import 'widgets/manga_card.dart';
-import 'widgets/continue_reading_grid.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +32,7 @@ void main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => CatalogProvider()),
         ChangeNotifierProvider(create: (_) => FavoritesProvider(prefs: prefs)),
+        ChangeNotifierProvider(create: (_) => ChaptersProvider()),
         ChangeNotifierProvider(
             create: (_) => SearchProvider(mangakakalotService)),
         ChangeNotifierProvider(
