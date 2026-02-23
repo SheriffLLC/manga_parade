@@ -15,9 +15,64 @@ class MangaReaderScreen extends StatefulWidget {
 }
 
 class _MangaReaderScreenState extends State<MangaReaderScreen> {
+  bool _ensured = false;
+  String? _ensureError;
+  bool _isLoadingQiscans = false;
+  List<FsChapter> _qiscansChapters = const <FsChapter>[];
+
   @override
   void initState() {
     super.initState();
+
+    final source = (widget.manga.source ?? '').toLowerCase();
+
+    // kick off chapter loading once
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      try {
+        if (source == 'qiscans') {
+          final postId = widget.manga.qiscansPostId;
+          if (postId == null || postId <= 0) {
+            if (mounted) {
+              setState(() {
+                _ensureError = 'Missing qiscansPostId for this manga.';
+              });
+            }
+            return;
+          }
+
+          if (mounted) {
+            setState(() {
+              _isLoadingQiscans = true;
+              _ensureError = null;
+            });
+          }
+
+          final chapters = await context
+              .read<ChaptersProvider>()
+              .fetchQiscansChapters(postId, page: 1, perPage: 200);
+
+          if (mounted) {
+            setState(() {
+              _qiscansChapters = chapters;
+              _isLoadingQiscans = false;
+              _ensured = true;
+            });
+          }
+        } else {
+          await context
+              .read<ChaptersProvider>()
+              .ensureChaptersIndexed(widget.manga.id);
+          if (mounted) setState(() => _ensured = true);
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _ensureError = e.toString();
+            _isLoadingQiscans = false;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -25,6 +80,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     final manga = widget.manga;
     final description = manga.description.trim();
     final heroTag = 'manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
+    final isQiscans = (manga.source ?? '').toLowerCase() == 'qiscans';
 
     return Scaffold(
       body: Container(
@@ -117,57 +173,101 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                       'DEBUG manga.id = ${widget.manga.id}',
                       style: const TextStyle(color: Colors.white54),
                     ),
-                    StreamBuilder<List<FsChapter>>(
-                      stream: context
-                          .watch<ChaptersProvider>()
-                          .watchChapters(widget.manga.id),
-                      builder: (context, snapshot) {
-                        if (snapshot.connectionState ==
-                            ConnectionState.waiting) {
-                          return const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Center(child: CircularProgressIndicator()),
+                    if (_ensureError == null)
+                      Text(
+                        _ensured ? 'Chapter sync OK' : 'Ensuring chapters…',
+                        style: const TextStyle(color: Colors.white54),
+                      ),
+                    if (_ensureError != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          'Chapter sync failed: $_ensureError',
+                          style: const TextStyle(color: Colors.red),
+                        ),
+                      ),
+                    ],
+                    if (isQiscans && _isLoadingQiscans)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(child: CircularProgressIndicator()),
+                      )
+                    else if (isQiscans && _qiscansChapters.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(child: Text('No chapters found.')),
+                      )
+                    else if (isQiscans)
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _qiscansChapters.length,
+                        itemBuilder: (context, i) {
+                          final ch = _qiscansChapters[i];
+                          return ListTile(
+                            title: Text(ch.title),
+                            subtitle: ch.chapterNumber.isEmpty
+                                ? null
+                                : Text('Chapter ${ch.chapterNumber}'),
+                            onTap: () {
+                              // Later: open chapter reader using ch.sourceUrl
+                              // Navigator.push(...);
+                            },
                           );
-                        }
-
-                        if (snapshot.hasError) {
-                          return Padding(
-                            padding: const EdgeInsets.all(12),
-                            child: Text(
-                              'Error loading chapters: ${snapshot.error}',
-                              style: const TextStyle(color: Colors.red),
-                            ),
-                          );
-                        }
-
-                        final chapters = snapshot.data ?? const <FsChapter>[];
-                        if (chapters.isEmpty) {
-                          return const Padding(
-                            padding: EdgeInsets.all(24),
-                            child: Center(child: Text('No chapters found.')),
-                          );
-                        }
-
-                        return ListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          itemCount: chapters.length,
-                          itemBuilder: (context, i) {
-                            final ch = chapters[i];
-                            return ListTile(
-                              title: Text(ch.title),
-                              subtitle: ch.chapterNumber.isEmpty
-                                  ? null
-                                  : Text('Chapter ${ch.chapterNumber}'),
-                              onTap: () {
-                                // Later: open chapter reader using ch.sourceUrl
-                                // Navigator.push(...);
-                              },
+                        },
+                      )
+                    else
+                      StreamBuilder<List<FsChapter>>(
+                        stream: context
+                            .watch<ChaptersProvider>()
+                            .watchChapters(widget.manga.id),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Center(child: CircularProgressIndicator()),
                             );
-                          },
-                        );
-                      },
-                    ),
+                          }
+
+                          if (snapshot.hasError) {
+                            return Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Text(
+                                'Error loading chapters: ${snapshot.error}',
+                                style: const TextStyle(color: Colors.red),
+                              ),
+                            );
+                          }
+
+                          final chapters = snapshot.data ?? const <FsChapter>[];
+                          if (chapters.isEmpty) {
+                            return const Padding(
+                              padding: EdgeInsets.all(24),
+                              child: Center(child: Text('No chapters found.')),
+                            );
+                          }
+
+                          return ListView.builder(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            itemCount: chapters.length,
+                            itemBuilder: (context, i) {
+                              final ch = chapters[i];
+                              return ListTile(
+                                title: Text(ch.title),
+                                subtitle: ch.chapterNumber.isEmpty
+                                    ? null
+                                    : Text('Chapter ${ch.chapterNumber}'),
+                                onTap: () {
+                                  // Later: open chapter reader using ch.sourceUrl
+                                  // Navigator.push(...);
+                                },
+                              );
+                            },
+                          );
+                        },
+                      ),
                   ],
                 ),
               ),

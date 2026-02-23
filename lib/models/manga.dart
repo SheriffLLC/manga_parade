@@ -14,6 +14,9 @@ class Manga {
 
   final String? volumes;
   final String? chapters;
+  final String? source;
+  final String? sourceUrl;
+  final int? qiscansPostId;
 
   const Manga({
     required this.id,
@@ -26,6 +29,9 @@ class Manga {
     this.updatedAt,
     this.volumes,
     this.chapters,
+    this.source,
+    this.sourceUrl,
+    this.qiscansPostId,
   });
 
   static DateTime? _toDateTime(dynamic v) {
@@ -84,6 +90,8 @@ class Manga {
           coverUrl: coverUrl,
           description: description,
           genres: const [],
+          source: 'mangadex',
+          sourceUrl: 'https://mangadex.org/title/$rawId',
         );
       }
 
@@ -106,6 +114,9 @@ class Manga {
         updatedAt: _toDateTime(json['updatedAt']),
         volumes: json['volumes'] as String?,
         chapters: json['chapters'] as String?,
+        source: json['source'] as String?,
+        sourceUrl: json['sourceUrl'] as String?,
+        qiscansPostId: (json['qiscansPostId'] as num?)?.toInt(),
       );
     } catch (e, st) {
       developer.log('Error parsing manga JSON: $e\nJSON: $json',
@@ -126,6 +137,9 @@ class Manga {
         'updatedAt': updatedAt?.millisecondsSinceEpoch,
         'volumes': volumes,
         'chapters': chapters,
+        'source': source,
+        'sourceUrl': sourceUrl,
+        'qiscansPostId': qiscansPostId,
       };
 
   @override
