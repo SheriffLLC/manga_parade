@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
+import '../models/chapter.dart';
 import '../models/manga.dart';
 import '../models/fs_chapter.dart';
 import '../providers/chapters_providers.dart';
+import '../screens/chapter_reader_screen.dart';
 import '../widgets/manga_image.dart';
 
 class MangaReaderScreen extends StatefulWidget {
@@ -17,8 +20,6 @@ class MangaReaderScreen extends StatefulWidget {
 class _MangaReaderScreenState extends State<MangaReaderScreen> {
   bool _ensured = false;
   String? _ensureError;
-  bool _isLoadingQiscans = false;
-  List<FsChapter> _qiscansChapters = const <FsChapter>[];
 
   @override
   void initState() {
@@ -26,53 +27,69 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
 
     final source = (widget.manga.source ?? '').toLowerCase();
 
-    // kick off chapter loading once
+    // Kick off in-app chapter loading only for sources the reader supports.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         if (source == 'qiscans') {
-          final postId = widget.manga.qiscansPostId;
-          if (postId == null || postId <= 0) {
-            if (mounted) {
-              setState(() {
-                _ensureError = 'Missing qiscansPostId for this manga.';
-              });
-            }
-            return;
-          }
-
-          if (mounted) {
-            setState(() {
-              _isLoadingQiscans = true;
-              _ensureError = null;
-            });
-          }
-
-          final chapters = await context
-              .read<ChaptersProvider>()
-              .fetchQiscansChapters(postId, page: 1, perPage: 200);
-
-          if (mounted) {
-            setState(() {
-              _qiscansChapters = chapters;
-              _isLoadingQiscans = false;
-              _ensured = true;
-            });
-          }
-        } else {
+          if (mounted) setState(() => _ensured = true);
+        } else if (source == 'mangadex') {
           await context
               .read<ChaptersProvider>()
               .ensureChaptersIndexed(widget.manga.id);
           if (mounted) setState(() => _ensured = true);
+        } else if (mounted) {
+          setState(() {
+            _ensureError = 'In-app chapters are only available for MangaDex.';
+          });
         }
       } catch (e) {
         if (mounted) {
           setState(() {
             _ensureError = e.toString();
-            _isLoadingQiscans = false;
           });
         }
       }
     });
+  }
+
+  Chapter _chapterFromFs(FsChapter chapter) {
+    return Chapter(
+      id: chapter.id,
+      title: chapter.title,
+      sourceUrl: chapter.sourceUrl,
+      source: widget.manga.source ?? 'mangadex',
+      chapterNumber: chapter.chapterNumber,
+      index: chapter.index,
+      publishedAt: chapter.publishedAt,
+      chapter: chapter.chapterNumber,
+      translatedLanguage: 'en',
+      publishAt: chapter.publishedAt ?? DateTime.now(),
+      pages: 0,
+    );
+  }
+
+  Future<void> _openSourceUrl() async {
+    final rawUrl = widget.manga.sourceUrl?.trim();
+    final uri = rawUrl == null || rawUrl.isEmpty ? null : Uri.tryParse(rawUrl);
+
+    if (uri == null || !uri.hasScheme) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No QiScans link is available.')),
+      );
+      return;
+    }
+
+    final didLaunch = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!didLaunch && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open QiScans.')),
+      );
+    }
   }
 
   @override
@@ -81,6 +98,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     final description = manga.description.trim();
     final heroTag = 'manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
     final isQiscans = (manga.source ?? '').toLowerCase() == 'qiscans';
+    final isMangadex = (manga.source ?? '').toLowerCase() == 'mangadex';
 
     return Scaffold(
       body: Container(
@@ -169,11 +187,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                           TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      'DEBUG manga.id = ${widget.manga.id}',
-                      style: const TextStyle(color: Colors.white54),
-                    ),
-                    if (_ensureError == null)
+                    if (!isQiscans && _ensureError == null)
                       Text(
                         _ensured ? 'Chapter sync OK' : 'Ensuring chapters…',
                         style: const TextStyle(color: Colors.white54),
@@ -187,36 +201,16 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                         ),
                       ),
                     ],
-                    if (isQiscans && _isLoadingQiscans)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(child: CircularProgressIndicator()),
+                    if (isQiscans)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _openSourceUrl,
+                          icon: const Icon(Icons.open_in_new),
+                          label: const Text('Open on QiScans'),
+                        ),
                       )
-                    else if (isQiscans && _qiscansChapters.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(child: Text('No chapters found.')),
-                      )
-                    else if (isQiscans)
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _qiscansChapters.length,
-                        itemBuilder: (context, i) {
-                          final ch = _qiscansChapters[i];
-                          return ListTile(
-                            title: Text(ch.title),
-                            subtitle: ch.chapterNumber.isEmpty
-                                ? null
-                                : Text('Chapter ${ch.chapterNumber}'),
-                            onTap: () {
-                              // Later: open chapter reader using ch.sourceUrl
-                              // Navigator.push(...);
-                            },
-                          );
-                        },
-                      )
-                    else
+                    else if (isMangadex)
                       StreamBuilder<List<FsChapter>>(
                         stream: context
                             .watch<ChaptersProvider>()
@@ -240,13 +234,17 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                             );
                           }
 
-                          final chapters = snapshot.data ?? const <FsChapter>[];
-                          if (chapters.isEmpty) {
+                          final fsChapters =
+                              snapshot.data ?? const <FsChapter>[];
+                          if (fsChapters.isEmpty) {
                             return const Padding(
                               padding: EdgeInsets.all(24),
                               child: Center(child: Text('No chapters found.')),
                             );
                           }
+
+                          final chapters =
+                              fsChapters.map(_chapterFromFs).toList();
 
                           return ListView.builder(
                             shrinkWrap: true,
@@ -260,13 +258,30 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                                     ? null
                                     : Text('Chapter ${ch.chapterNumber}'),
                                 onTap: () {
-                                  // Later: open chapter reader using ch.sourceUrl
-                                  // Navigator.push(...);
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => ChapterReaderScreen(
+                                        manga: widget.manga,
+                                        chapter: ch,
+                                        allChapters: chapters,
+                                      ),
+                                    ),
+                                  );
                                 },
                               );
                             },
                           );
                         },
+                      )
+                    else
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(
+                          child: Text(
+                            'In-app chapters are available for MangaDex titles.',
+                          ),
+                        ),
                       ),
                   ],
                 ),

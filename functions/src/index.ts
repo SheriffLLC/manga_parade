@@ -136,22 +136,62 @@ function hoursAgo(ts: Timestamp, hours: number) {
   return ts.toMillis() >= Date.now() - ms;
 }
 
-async function fetchQiscansChaptersViaApi(postId: number, page = 1, perPage = 100) {
+function stringifyUpstreamBody(body: any): string {
+  if (typeof body === "string") return body;
+  try {
+    return JSON.stringify(body ?? "");
+  } catch {
+    return String(body ?? "");
+  }
+}
+
+function isQiscansBlockedChallenge(status: any, contentTypeRaw: any, body: any): boolean {
+  const contentType = String(contentTypeRaw || "").toLowerCase();
+  const bodyText = stringifyUpstreamBody(body).toLowerCase();
+
+  return (
+    Number(status) === 403 ||
+    contentType.includes("text/html") ||
+    bodyText.includes("just a moment") ||
+    bodyText.includes("cloudflare")
+  );
+}
+
+async function getQiscansChaptersPage(postId: number, page = 1, perPage = 100) {
   const url = `https://api.qiscans.org/api/v2/posts/${postId}/chapters`;
-  const params = { page, perPage, sortOrder: "desc", q: "" };
 
-  const { data } = await axios.get<ChaptersResponse>(url, { params });
+  return axios.get<ChaptersResponse>(url, {
+    params: {
+      page,
+      perPage,
+      sortOrder: "desc",
+      q: "",
+    },
+    headers: {
+      "Accept": "application/json, text/plain, */*",
+      "Origin": "https://qiscans.org",
+      "Referer": "https://qiscans.org/",
+      "User-Agent": "Mozilla/5.0",
+    },
+    timeout: 15000,
+  });
+}
 
-  // Convert API response → your ChapterItem[]
+async function fetchQiscansChaptersViaApi(
+  postId: number,
+  page = 1,
+  perPage = 100
+): Promise<ChapterItem[]> {
+  const { data } = await getQiscansChaptersPage(postId, page, perPage);
+
   return (data.data || []).map((ch: any, i: number): ChapterItem => {
     const num = String(ch.number ?? "");
     const slug = String(ch.slug ?? `chapter-${num || i + 1}`);
 
-    // If QiScans provides a redirectUrl or readable URL, use it; otherwise store a constructed reference.
     const sourceUrl =
       ch?.mangaPost?.redirectUrl
         ? String(ch.mangaPost.redirectUrl)
-        : `https://qiscans.org/chapter/${slug}`; // may not be perfect; adjust if you find the real pattern
+        : `https://qiscans.org/chapter/${slug}`;
 
     return {
       id: `qiscans_api_${ch.id}`,
@@ -242,6 +282,24 @@ async function upsertChapters(mangaId: string, source: SourceType, chapters: Cha
   );
 }
 
+function extractQiscansPostIdFromPayload(payload: any): number | null {
+  if (!payload) return null;
+
+  // Case 1: full chapter-list response
+  if (Array.isArray(payload.data) && payload.data.length > 0) {
+    for (const item of payload.data) {
+      const id = Number(item?.mangaPost?.id || 0);
+      if (Number.isFinite(id) && id > 0) return id;
+    }
+  }
+
+  // Case 2: single chapter object
+  const singleId = Number(payload?.mangaPost?.id || 0);
+  if (Number.isFinite(singleId) && singleId > 0) return singleId;
+
+  return null;
+}
+
 // ✅ Health check
 app.get("/healthz", (req, res) => {
   res.status(200).json({ ok: true, ts: new Date().toISOString() });
@@ -276,10 +334,7 @@ app.get("/manga/:postId/chapters", async (req, res) => {
       });
     }
 
-    const url = `https://api.qiscans.org/api/v2/posts/${postId}/chapters`;
-    const params = { page, perPage, sortOrder: "desc", q: "" };
-
-    const upstream = await axios.get<ChaptersResponse>(url, { params });
+    const upstream = await getQiscansChaptersPage(postId, page, perPage);
 
     const payload: Cached<ChaptersResponse> = {
       fetchedAt: Date.now(),
@@ -293,8 +348,38 @@ app.get("/manga/:postId/chapters", async (req, res) => {
       _cache: { hit: false, fetchedAt: new Date(payload.fetchedAt).toISOString() },
     });
   } catch (e: any) {
-    logger.error("GET /manga/:postId/chapters failed", e);
-    return res.status(500).json({ error: String(e?.message || e) });
+    const status = e?.response?.status;
+    const body = e?.response?.data;
+    const contentType = e?.response?.headers?.["content-type"];
+    const blocked = isQiscansBlockedChallenge(status, contentType, body);
+
+    if (blocked) {
+      logger.error("GET /manga/:postId/chapters blocked by upstream", {
+        message: String(e?.message || e),
+        status,
+        contentType,
+      });
+
+      return res.status(503).json({
+        error: "QiScans blocked the chapter request right now. Please try again in a moment.",
+        upstreamStatus: status ?? null,
+        upstreamBody: null,
+      });
+    }
+
+    logger.error("GET /manga/:postId/chapters failed", {
+      message: String(e?.message || e),
+      status,
+      body,
+    });
+
+    return res.status(500).json({
+      error: status
+        ? `QiScans upstream returned ${status}`
+        : String(e?.message || e),
+      upstreamStatus: status ?? null,
+      upstreamBody: body ?? null,
+    });
   }
 });
 
@@ -320,6 +405,55 @@ app.post("/manga/:mangaId/qiscansPostId", async (req, res) => {
     return res.json({ ok: true, mangaId, postId });
   } catch (e: any) {
     logger.error("POST /manga/:mangaId/qiscansPostId failed", e);
+    return res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// POST /manga/:mangaId/discover-qiscans-post-id
+// Body can be either:
+// 1) the pasted QiScans chapter-list JSON response
+// 2) a single chapter object containing mangaPost.id
+app.post("/manga/:mangaId/discover-qiscans-post-id", async (req, res) => {
+  try {
+    const mangaId = String(req.params.mangaId || "").trim();
+    const payload = req.body;
+
+    if (!mangaId) {
+      return res.status(400).json({ error: "Missing mangaId" });
+    }
+
+    const mangaRef = db.collection("manga").doc(mangaId);
+    const mangaSnap = await mangaRef.get();
+
+    if (!mangaSnap.exists) {
+      return res.status(404).json({ error: "Manga doc not found", mangaId });
+    }
+
+    const postId = extractQiscansPostIdFromPayload(payload);
+
+    if (!postId) {
+      return res.status(400).json({
+        error: "Could not discover qiscansPostId from provided payload",
+        hint: "Paste a QiScans chapter API response that contains mangaPost.id",
+      });
+    }
+
+    await mangaRef.set(
+      {
+        qiscansPostId: postId,
+        qiscansPostIdUpdatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return res.status(200).json({
+      ok: true,
+      mangaId,
+      qiscansPostId: postId,
+      saved: true,
+    });
+  } catch (e: any) {
+    logger.error("POST /manga/:mangaId/discover-qiscans-post-id failed", e);
     return res.status(500).json({ error: String(e?.message || e) });
   }
 });

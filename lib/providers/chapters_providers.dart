@@ -9,14 +9,12 @@ import '../models/fs_chapter.dart';
 class ChaptersProvider extends ChangeNotifier {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // TODO: paste your deployed base URL here
-  // Example: https://syncchapterstofirestore-xxxxx-uc.a.run.app
+  // Keep this for NON-QiScans sources that still use your backend sync path.
   static const String syncChaptersBaseUrl =
       'https://syncchapterstofirestore-uqirvwodma-uc.a.run.app/';
 
-  // New backend route host for: GET /api/manga/:postId/chapters
-  static const String chaptersApiHost =
-      'https://us-central1-manga-world-project.cloudfunctions.net';
+  // QiScans direct API base
+  static const String qiscansApiBase = 'https://api.qiscans.org/api/v2';
 
   Future<void> ensureChaptersIndexed(String mangaId) async {
     final uri = Uri.parse(syncChaptersBaseUrl).replace(queryParameters: {
@@ -41,20 +39,50 @@ class ChaptersProvider extends ChangeNotifier {
     int postId, {
     int page = 1,
     int perPage = 200,
-    bool refresh = false,
+    bool refresh = false, // kept for compatibility, not used now
   }) async {
-    final uri = Uri.parse(chaptersApiHost).replace(
-      path: '/api/manga/$postId/chapters',
+    final uri = Uri.parse('$qiscansApiBase/posts/$postId/chapters').replace(
       queryParameters: {
         'page': '$page',
         'perPage': '$perPage',
-        'refresh': refresh ? '1' : '0',
+        'sortOrder': 'desc',
+        'q': '',
       },
     );
 
-    final resp = await http.get(uri);
+    final resp = await http.get(
+      uri,
+      headers: const {
+        'Accept': 'application/json, text/plain, */*',
+      },
+    );
+
+    final contentType = resp.headers['content-type'] ?? '';
+    final bodyLower = resp.body.toLowerCase();
+
+    // Friendly error handling for Cloudflare / HTML challenge pages
     if (resp.statusCode != 200) {
-      throw Exception('Chapter API failed (${resp.statusCode}): ${resp.body}');
+      if (contentType.contains('text/html') ||
+          bodyLower.contains('just a moment') ||
+          bodyLower.contains('cloudflare') ||
+          bodyLower.contains('enable javascript and cookies')) {
+        throw Exception(
+          'QiScans blocked the chapter request right now. Please try again in a moment.',
+        );
+      }
+
+      throw Exception(
+        'QiScans chapter API failed (${resp.statusCode}): ${resp.body}',
+      );
+    }
+
+    if (contentType.contains('text/html') ||
+        bodyLower.contains('just a moment') ||
+        bodyLower.contains('cloudflare') ||
+        bodyLower.contains('enable javascript and cookies')) {
+      throw Exception(
+        'QiScans blocked the chapter request right now. Please try again in a moment.',
+      );
     }
 
     final json = jsonDecode(resp.body) as Map<String, dynamic>;
@@ -66,18 +94,17 @@ class ChaptersProvider extends ChangeNotifier {
           const <String, dynamic>{};
 
       final chapterNumber = (ch['number'] ?? '').toString();
-      final title = (ch['title']?.toString().trim().isNotEmpty ?? false)
-          ? ch['title'].toString()
+      final rawTitle = (ch['title'] ?? '').toString().trim();
+      final title = rawTitle.isNotEmpty
+          ? rawTitle
           : (chapterNumber.isNotEmpty ? 'Chapter $chapterNumber' : 'Chapter');
 
-      final redirectUrl =
-          (ch['mangaPost'] as Map?)?['redirectUrl']?.toString() ?? '';
-      final slug = (ch['slug'] ?? '').toString();
-      final sourceUrl = redirectUrl.isNotEmpty
-          ? redirectUrl
-          : (slug.isNotEmpty
-              ? 'https://qiscans.org/chapter/$slug'
-              : 'https://qiscans.org');
+      final slug = (ch['slug'] ?? '').toString().trim();
+
+      // Best available readable source URL
+      final sourceUrl = slug.isNotEmpty
+          ? 'https://qiscans.org/series/placeholder/$slug'
+          : 'https://qiscans.org';
 
       final n = double.tryParse(chapterNumber);
       final index = n != null ? (n * 1000).round() : (1000000 - i);
