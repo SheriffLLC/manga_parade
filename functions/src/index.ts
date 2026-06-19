@@ -136,7 +136,7 @@ function hoursAgo(ts: Timestamp, hours: number) {
   return ts.toMillis() >= Date.now() - ms;
 }
 
-async function fetchQiscansChaptersViaApi(postId: number, page = 1, perPage = 100) {
+export async function fetchQiscansChaptersViaApi(postId: number, page = 1, perPage = 100) {
   const url = `https://api.qiscans.org/api/v2/posts/${postId}/chapters`;
   const params = { page, perPage, sortOrder: "desc", q: "" };
 
@@ -442,14 +442,40 @@ async function fetchMangadex(type: RailType, limit: number): Promise<RailItem[]>
   return items;
 }
 
+function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
 // -------------------------
 // Firestore upsert
 // -------------------------
 async function upsertMangaDocs(items: RailItem[], type: RailType) {
+  // Query existing documents with the same normalizedTitle in parallel first
+  const queries = items.map(async (item) => {
+    const norm = normalizeTitle(item.title);
+    const snap = await db.collection("manga").where("normalizedTitle", "==", norm).limit(1).get();
+    return { item, norm, snap };
+  });
+
+  const results = await Promise.all(queries);
   const batch = db.batch();
 
-  for (const item of items) {
-    const ref = db.collection("manga").doc(item.id);
+  for (const { item, norm, snap } of results) {
+    let ref;
+    let existingData: Record<string, any> = {};
+
+    if (!snap.empty) {
+      // Document with the same normalized title already exists
+      const doc = snap.docs[0];
+      ref = db.collection("manga").doc(doc.id);
+      existingData = doc.data() || {};
+    } else {
+      // No document found; create a new one with item's default ID
+      ref = db.collection("manga").doc(item.id);
+    }
 
     const updatedAtTs =
       type === "recent"
@@ -461,16 +487,51 @@ async function upsertMangaDocs(items: RailItem[], type: RailType) {
         ? (item.catalogScore ?? 0)
         : undefined;
 
+    // Prefer MangaDex as the primary source if either is MangaDex
+    const isMangaDex = item.source === "mangadex" || existingData.source === "mangadex";
+    const primarySource = isMangaDex ? "mangadex" : "qiscans";
+
+    let sourceUrl = item.sourceUrl;
+    let qiscansSourceUrl = existingData.qiscansSourceUrl || undefined;
+
+    if (item.source === "mangadex") {
+      sourceUrl = item.sourceUrl;
+      if (existingData.source === "qiscans") {
+        qiscansSourceUrl = existingData.sourceUrl;
+      }
+    } else if (item.source === "qiscans") {
+      qiscansSourceUrl = item.sourceUrl;
+      if (existingData.source === "mangadex") {
+        sourceUrl = existingData.sourceUrl;
+      }
+    }
+
+    const qiscansPostId = existingData.qiscansPostId || undefined;
+
     const payload: Record<string, any> = {
-      title: item.title,
-      coverUrl: item.coverUrl,
-      sourceUrl: item.sourceUrl,
-      source: item.source,
+      title: isMangaDex ? (item.source === "mangadex" ? item.title : existingData.title) : item.title,
+      coverUrl: isMangaDex ? (item.source === "mangadex" ? item.coverUrl : existingData.coverUrl) : item.coverUrl,
+      sourceUrl: sourceUrl,
+      source: primarySource,
+      normalizedTitle: norm,
       lastSyncedAt: FieldValue.serverTimestamp(),
     };
 
-    if (updatedAtTs) payload.updatedAt = updatedAtTs;
-    if (catalogScore !== undefined) payload.catalogScore = catalogScore;
+    if (qiscansSourceUrl) payload.qiscansSourceUrl = qiscansSourceUrl;
+    if (qiscansPostId) payload.qiscansPostId = qiscansPostId;
+
+    if (updatedAtTs) {
+      const existingUpdatedAt = existingData.updatedAt as Timestamp | undefined;
+      if (!existingUpdatedAt || updatedAtTs.toMillis() > existingUpdatedAt.toMillis()) {
+        payload.updatedAt = updatedAtTs;
+      }
+    }
+    if (catalogScore !== undefined) {
+      const existingScore = Number(existingData.catalogScore || 0);
+      if (catalogScore > existingScore) {
+        payload.catalogScore = catalogScore;
+      }
+    }
 
     batch.set(ref, payload, { merge: true });
   }
@@ -561,12 +622,8 @@ export const syncTopChaptersBatch = onSchedule("every 2 hours", async () => {
     try {
       let chapters: ChapterItem[] = [];
       if (source === "qiscans") {
-        const postId = Number(data.qiscansPostId || 0);
-        if (!postId) {
-          logger.info("Skipping qiscans missing postId", { mangaId });
-          continue;
-        }
-        chapters = await fetchQiscansChaptersViaApi(postId, 1, 200);
+        logger.info("Skipping scheduled chapter sync for qiscans due to Cloudflare block", { mangaId });
+        continue;
       } else {
         chapters = await fetchMangadexChapters(sourceUrl);
       }
@@ -584,6 +641,129 @@ export const syncTopChaptersBatch = onSchedule("every 2 hours", async () => {
   logger.info("syncTopChaptersBatch complete", { processed: batchIds.length, scraped, skippedFresh });
 });
 
+async function fetchAndCreateMangadexMangaDoc(mangaId: string): Promise<{ source: SourceType; sourceUrl: string } | null> {
+  const mdId = mangaId.replace("mangadex_", "");
+  if (!mdId) return null;
+
+  const url = `https://api.mangadex.org/manga/${mdId}?includes[]=cover_art`;
+  const res = await fetch(url, { headers: { "Accept": "application/json" } });
+  if (!res.ok) {
+    logger.warn(`Failed to fetch manga details from MangaDex for ${mdId}: HTTP ${res.status}`);
+    return null;
+  }
+
+  const json: any = await res.json();
+  const m = json?.data;
+  if (!m) return null;
+
+  const attrs = m.attributes || {};
+  const titleObj = attrs.title || {};
+  const title = titleObj.en || Object.values(titleObj)[0] || "Untitled";
+
+  let fileName = "";
+  const rels: any[] = Array.isArray(m.relationships) ? m.relationships : [];
+  const coverRel = rels.find((r) => r.type === "cover_art");
+  if (coverRel?.attributes?.fileName) {
+    fileName = coverRel.attributes.fileName;
+  }
+
+  const coverUrl = fileName
+    ? `https://uploads.mangadex.org/covers/${mdId}/${fileName}.512.jpg`
+    : "";
+
+  const norm = normalizeTitle(title);
+
+  // Check if a document with the same normalizedTitle already exists
+  const snap = await db.collection("manga").where("normalizedTitle", "==", norm).limit(1).get();
+  
+  const primarySource = "mangadex";
+  const sourceUrl = `https://mangadex.org/title/${mdId}`;
+
+  if (!snap.empty) {
+    const doc = snap.docs[0];
+    const oldId = doc.id;
+    
+    // If it's a different document ID, migrate/merge!
+    if (oldId !== mangaId) {
+      logger.info(`Migrating/Merging duplicate manga: ${oldId} -> ${mangaId}`, { title });
+      const existingData = doc.data() || {};
+      let qiscansSourceUrl = existingData.qiscansSourceUrl || undefined;
+      if (existingData.source === "qiscans") {
+        qiscansSourceUrl = existingData.sourceUrl;
+      }
+      const qiscansPostId = existingData.qiscansPostId || undefined;
+
+      const payload: Record<string, any> = {
+        title,
+        coverUrl,
+        sourceUrl,
+        source: primarySource,
+        normalizedTitle: norm,
+        lastSyncedAt: FieldValue.serverTimestamp(),
+      };
+
+      if (qiscansSourceUrl) payload.qiscansSourceUrl = qiscansSourceUrl;
+      if (qiscansPostId) payload.qiscansPostId = qiscansPostId;
+
+      const updatedAtTs = isoToTimestamp(attrs.updatedAt) ?? Timestamp.now();
+      const existingUpdatedAt = existingData.updatedAt as Timestamp | undefined;
+      if (!existingUpdatedAt || updatedAtTs.toMillis() > existingUpdatedAt.toMillis()) {
+        payload.updatedAt = updatedAtTs;
+      }
+
+      // 1. Write the new document with mangaId
+      await db.collection("manga").doc(mangaId).set(payload, { merge: true });
+
+      // 2. Delete the old document and its chapters subcollection
+      try {
+        const oldChapters = await db.collection("manga").doc(oldId).collection("chapters").get();
+        const deleteBatch = db.batch();
+        for (const chDoc of oldChapters.docs) {
+          deleteBatch.delete(chDoc.ref);
+        }
+        deleteBatch.delete(db.collection("manga").doc(oldId));
+        await deleteBatch.commit();
+        logger.info(`Successfully deleted old duplicate manga document: ${oldId}`);
+      } catch (err) {
+        logger.error(`Error deleting old duplicate manga document: ${oldId}`, err);
+      }
+    } else {
+      // It's the same ID, just merge
+      const existingData = doc.data() || {};
+      const payload: Record<string, any> = {
+        title,
+        coverUrl,
+        sourceUrl,
+        source: primarySource,
+        normalizedTitle: norm,
+        lastSyncedAt: FieldValue.serverTimestamp(),
+      };
+      if (existingData.qiscansSourceUrl) payload.qiscansSourceUrl = existingData.qiscansSourceUrl;
+      if (existingData.qiscansPostId) payload.qiscansPostId = existingData.qiscansPostId;
+      await db.collection("manga").doc(mangaId).set(payload, { merge: true });
+    }
+  } else {
+    // No document found; create a new one with mangaId
+    const payload: Record<string, any> = {
+      title,
+      coverUrl,
+      sourceUrl,
+      source: primarySource,
+      normalizedTitle: norm,
+      lastSyncedAt: FieldValue.serverTimestamp(),
+    };
+    const updatedAtTs = isoToTimestamp(attrs.updatedAt) ?? Timestamp.now();
+    payload.updatedAt = updatedAtTs;
+
+    await db.collection("manga").doc(mangaId).set(payload, { merge: true });
+  }
+
+  return {
+    source: primarySource,
+    sourceUrl: sourceUrl,
+  };
+}
+
 export const syncChaptersToFirestore = onRequest((req, res) => {
   corsMiddleware(req, res, async () => {
     try {
@@ -592,8 +772,20 @@ export const syncChaptersToFirestore = onRequest((req, res) => {
 
       if (!mangaId) return res.status(400).json({ error: "Missing mangaId" });
 
-      const doc = await db.collection("manga").doc(mangaId).get();
-      if (!doc.exists) return res.status(404).json({ error: "Manga not found" });
+      let doc = await db.collection("manga").doc(mangaId).get();
+      
+      if (!doc.exists) {
+        if (mangaId.startsWith("mangadex_")) {
+          const created = await fetchAndCreateMangadexMangaDoc(mangaId);
+          if (!created) {
+            return res.status(404).json({ error: "Manga not found on MangaDex" });
+          }
+          // Reload doc reference
+          doc = await db.collection("manga").doc(mangaId).get();
+        } else {
+          return res.status(404).json({ error: "Manga not found" });
+        }
+      }
 
       const data = doc.data() || {};
       const source = String(data.source || "") as SourceType;
@@ -639,11 +831,7 @@ export const syncChaptersToFirestore = onRequest((req, res) => {
       // Scrape
       let chapters: ChapterItem[] = [];
       if (source === "qiscans") {
-        const postId = Number(data.qiscansPostId || 0);
-        if (!postId) {
-          return res.status(400).json({ error: "Manga doc missing qiscansPostId" });
-        }
-        chapters = await fetchQiscansChaptersViaApi(postId, 1, 200);
+        return res.status(403).json({ error: "QiScans chapter sync is temporarily disabled due to Cloudflare blocks. Please read on QiScans website." });
       } else {
         chapters = await fetchMangadexChapters(sourceUrl);
       }

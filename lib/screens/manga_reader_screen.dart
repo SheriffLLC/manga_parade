@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/manga.dart';
 import '../models/fs_chapter.dart';
 import '../providers/chapters_providers.dart';
@@ -17,8 +18,25 @@ class MangaReaderScreen extends StatefulWidget {
 class _MangaReaderScreenState extends State<MangaReaderScreen> {
   bool _ensured = false;
   String? _ensureError;
-  bool _isLoadingQiscans = false;
-  List<FsChapter> _qiscansChapters = const <FsChapter>[];
+
+  Future<void> _launchExternalUrl(BuildContext context, String urlString) async {
+    final Uri url = Uri.parse(urlString);
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Could not open page: $urlString')),
+          );
+        }
+      }
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
 
   @override
   void initState() {
@@ -30,31 +48,9 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
         if (source == 'qiscans') {
-          final postId = widget.manga.qiscansPostId;
-          if (postId == null || postId <= 0) {
-            if (mounted) {
-              setState(() {
-                _ensureError = 'Missing qiscansPostId for this manga.';
-              });
-            }
-            return;
-          }
-
+          // Skip in-app chapter syncing/scraping due to block
           if (mounted) {
             setState(() {
-              _isLoadingQiscans = true;
-              _ensureError = null;
-            });
-          }
-
-          final chapters = await context
-              .read<ChaptersProvider>()
-              .fetchQiscansChapters(postId, page: 1, perPage: 200);
-
-          if (mounted) {
-            setState(() {
-              _qiscansChapters = chapters;
-              _isLoadingQiscans = false;
               _ensured = true;
             });
           }
@@ -68,7 +64,6 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
         if (mounted) {
           setState(() {
             _ensureError = e.toString();
-            _isLoadingQiscans = false;
           });
         }
       }
@@ -163,59 +158,48 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Chapters',
-                      style:
-                          TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Chapters',
+                          style:
+                              TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                        ),
+                        if (!isQiscans && manga.qiscansSourceUrl != null && manga.qiscansSourceUrl!.isNotEmpty)
+                          TextButton.icon(
+                            onPressed: () => _launchExternalUrl(context, manga.qiscansSourceUrl!),
+                            icon: const Icon(Icons.open_in_new, size: 16, color: Colors.blueAccent),
+                            label: const Text(
+                              'Open on QiScans',
+                              style: TextStyle(color: Colors.blueAccent, fontSize: 13),
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 12),
                     Text(
                       'DEBUG manga.id = ${widget.manga.id}',
                       style: const TextStyle(color: Colors.white54),
                     ),
-                    if (_ensureError == null)
-                      Text(
-                        _ensured ? 'Chapter sync OK' : 'Ensuring chapters…',
-                        style: const TextStyle(color: Colors.white54),
-                      ),
-                    if (_ensureError != null) ...[
-                      Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Text(
-                          'Chapter sync failed: $_ensureError',
-                          style: const TextStyle(color: Colors.red),
+                    if (!isQiscans) ...[
+                      if (_ensureError == null)
+                        Text(
+                          _ensured ? 'Chapter sync OK' : 'Ensuring chapters…',
+                          style: const TextStyle(color: Colors.white54),
                         ),
-                      ),
+                      if (_ensureError != null) ...[
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Text(
+                            'Chapter sync failed: $_ensureError',
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                        ),
+                      ],
                     ],
-                    if (isQiscans && _isLoadingQiscans)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(child: CircularProgressIndicator()),
-                      )
-                    else if (isQiscans && _qiscansChapters.isEmpty)
-                      const Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Center(child: Text('No chapters found.')),
-                      )
-                    else if (isQiscans)
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _qiscansChapters.length,
-                        itemBuilder: (context, i) {
-                          final ch = _qiscansChapters[i];
-                          return ListTile(
-                            title: Text(ch.title),
-                            subtitle: ch.chapterNumber.isEmpty
-                                ? null
-                                : Text('Chapter ${ch.chapterNumber}'),
-                            onTap: () {
-                              // Later: open chapter reader using ch.sourceUrl
-                              // Navigator.push(...);
-                            },
-                          );
-                        },
-                      )
+                    if (isQiscans)
+                      _buildQiScansRedirectCard(context, manga)
                     else
                       StreamBuilder<List<FsChapter>>(
                         stream: context
@@ -256,7 +240,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                               final ch = chapters[i];
                               return ListTile(
                                 title: Text(ch.title),
-                                subtitle: ch.chapterNumber.isEmpty
+                                subtitle: ((ch.chapterNumber as String?)?.isEmpty ?? true)
                                     ? null
                                     : Text('Chapter ${ch.chapterNumber}'),
                                 onTap: () {
@@ -274,6 +258,100 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildQiScansRedirectCard(BuildContext context, Manga manga) {
+    final url = manga.sourceUrl ?? manga.qiscansSourceUrl ?? '';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.4),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.blueAccent[100], size: 28),
+              const SizedBox(width: 12),
+              const Text(
+                'Read on QiScans',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            'In-app reading is temporarily unavailable for this title. You can read all chapters directly on QiScans.',
+            style: TextStyle(
+              color: Colors.white.withOpacity(0.8),
+              fontSize: 14,
+              height: 1.4,
+            ),
+          ),
+          const SizedBox(height: 20),
+          if (url.isNotEmpty) ...[
+            Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF6C63FF),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onPressed: () => _launchExternalUrl(context, url),
+                    icon: const Icon(Icons.open_in_browser, size: 20),
+                    label: const Text(
+                      'Open on QiScans',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white70,
+                      side: const BorderSide(color: Colors.white30),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                    onPressed: () => _launchExternalUrl(context, url),
+                    icon: const Icon(Icons.chrome_reader_mode, size: 20),
+                    label: const Text(
+                      'Read Latest',
+                      style: TextStyle(fontSize: 15),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ] else ...[
+            const Text(
+              'No source URL available for this title.',
+              style: TextStyle(color: Colors.white54, fontStyle: FontStyle.italic),
+            ),
+          ],
+        ],
       ),
     );
   }

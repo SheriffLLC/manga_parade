@@ -61,6 +61,47 @@ class CatalogProvider extends ChangeNotifier {
     };
   }
 
+  List<Manga> _deduplicateMangas(List<Manga> list) {
+    final Map<String, Manga> unique = {};
+    for (final manga in list) {
+      final norm = manga.title
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]'), '')
+          .trim();
+      final existing = unique[norm];
+      if (existing == null) {
+        unique[norm] = manga;
+      } else {
+        // Merge the two Manga objects: prefer 'mangadex' over 'qiscans'
+        final preferNew = manga.source == 'mangadex' && existing.source != 'mangadex';
+        final merged = Manga(
+          id: preferNew ? manga.id : existing.id,
+          title: preferNew ? manga.title : existing.title,
+          coverUrl: preferNew ? manga.coverUrl : existing.coverUrl,
+          description: preferNew
+              ? (manga.description.isNotEmpty ? manga.description : existing.description)
+              : (existing.description.isNotEmpty ? existing.description : manga.description),
+          genres: preferNew ? manga.genres : existing.genres,
+          catalogScore: (manga.catalogScore ?? 0) > (existing.catalogScore ?? 0)
+              ? manga.catalogScore
+              : existing.catalogScore,
+          createdAt: existing.createdAt ?? manga.createdAt,
+          updatedAt: (manga.updatedAt != null && existing.updatedAt != null)
+              ? (manga.updatedAt!.isAfter(existing.updatedAt!) ? manga.updatedAt : existing.updatedAt)
+              : (existing.updatedAt ?? manga.updatedAt),
+          volumes: preferNew ? manga.volumes : existing.volumes,
+          chapters: preferNew ? manga.chapters : existing.chapters,
+          source: preferNew ? manga.source : existing.source,
+          sourceUrl: preferNew ? manga.sourceUrl : existing.sourceUrl,
+          qiscansSourceUrl: manga.qiscansSourceUrl ?? existing.qiscansSourceUrl,
+          qiscansPostId: manga.qiscansPostId ?? existing.qiscansPostId,
+        );
+        unique[norm] = merged;
+      }
+    }
+    return unique.values.toList();
+  }
+
   // -----------------------------
   // PAGINATED FETCH (All Manga)
   // -----------------------------
@@ -90,6 +131,10 @@ class CatalogProvider extends ChangeNotifier {
           final map = _withDocIdAndCleanUrl(doc);
           _mangas.add(Manga.fromJson(map));
         }
+
+        final deduped = _deduplicateMangas(_mangas);
+        _mangas.clear();
+        _mangas.addAll(deduped);
       }
 
       if (snap.docs.length < pageSize) {
@@ -124,6 +169,9 @@ class CatalogProvider extends ChangeNotifier {
         ..clear()
         ..addAll(
             snap.docs.map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d))));
+      final deduped = _deduplicateMangas(_recentlyUpdated);
+      _recentlyUpdated.clear();
+      _recentlyUpdated.addAll(deduped);
     } catch (e) {
       _recentlyUpdatedError = 'Failed to load Recently Updated: $e';
       debugPrint(_recentlyUpdatedError);
@@ -164,6 +212,9 @@ class CatalogProvider extends ChangeNotifier {
         ..clear()
         ..addAll(
             snap.docs.map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d))));
+      final deduped = _deduplicateMangas(_mostPopular);
+      _mostPopular.clear();
+      _mostPopular.addAll(deduped);
     } catch (e) {
       _mostPopularError = 'Failed to load Most Popular: $e';
     } finally {
@@ -218,6 +269,9 @@ class CatalogProvider extends ChangeNotifier {
         for (final doc in snap.docs) {
           _recentlyUpdatedAll.add(Manga.fromJson(_withDocIdAndCleanUrl(doc)));
         }
+        final deduped = _deduplicateMangas(_recentlyUpdatedAll);
+        _recentlyUpdatedAll.clear();
+        _recentlyUpdatedAll.addAll(deduped);
       }
 
       if (snap.docs.length < pageSize) {
@@ -277,6 +331,9 @@ class CatalogProvider extends ChangeNotifier {
         for (final doc in snap.docs) {
           _mostPopularAll.add(Manga.fromJson(_withDocIdAndCleanUrl(doc)));
         }
+        final deduped = _deduplicateMangas(_mostPopularAll);
+        _mostPopularAll.clear();
+        _mostPopularAll.addAll(deduped);
       }
 
       if (snap.docs.length < pageSize) {
