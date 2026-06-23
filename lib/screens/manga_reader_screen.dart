@@ -47,7 +47,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     // kick off chapter loading once
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
-        if (source == 'qiscans') {
+        if (source == 'qiscans' || source == 'asurascans') {
           // Skip in-app chapter syncing/scraping due to block
           if (mounted) {
             setState(() {
@@ -75,7 +75,8 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     final manga = widget.manga;
     final description = manga.description.trim();
     final heroTag = 'manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
-    final isQiscans = (manga.source ?? '').toLowerCase() == 'qiscans';
+    final isRedirectOnly = (manga.source ?? '').toLowerCase() == 'qiscans' ||
+        (manga.source ?? '').toLowerCase() == 'asurascans';
 
     return Scaffold(
       body: Container(
@@ -166,13 +167,43 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                           style:
                               TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                         ),
-                        if (!isQiscans && manga.qiscansSourceUrl != null && manga.qiscansSourceUrl!.isNotEmpty)
-                          TextButton.icon(
-                            onPressed: () => _launchExternalUrl(context, manga.qiscansSourceUrl!),
-                            icon: const Icon(Icons.open_in_new, size: 16, color: Colors.blueAccent),
-                            label: const Text(
-                              'Open on QiScans',
-                              style: TextStyle(color: Colors.blueAccent, fontSize: 13),
+                        const SizedBox(width: 8),
+                        if (!isRedirectOnly)
+                          Expanded(
+                            child: Wrap(
+                              alignment: WrapAlignment.end,
+                              spacing: 8,
+                              runSpacing: 4,
+                              children: [
+                                if (manga.qiscansSourceUrl != null && manga.qiscansSourceUrl!.isNotEmpty)
+                                  TextButton.icon(
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    onPressed: () => _launchExternalUrl(context, manga.qiscansSourceUrl!),
+                                    icon: const Icon(Icons.open_in_new, size: 14, color: Colors.blueAccent),
+                                    label: const Text(
+                                      'Open on QiScans',
+                                      style: TextStyle(color: Colors.blueAccent, fontSize: 12),
+                                    ),
+                                  ),
+                                if (manga.asurascansSourceUrl != null && manga.asurascansSourceUrl!.isNotEmpty)
+                                  TextButton.icon(
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    onPressed: () => _launchExternalUrl(context, manga.asurascansSourceUrl!),
+                                    icon: const Icon(Icons.open_in_new, size: 14, color: Colors.blueAccent),
+                                    label: const Text(
+                                      'Open on Asura Scans',
+                                      style: TextStyle(color: Colors.blueAccent, fontSize: 12),
+                                    ),
+                                  ),
+                              ],
                             ),
                           ),
                       ],
@@ -182,7 +213,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                       'DEBUG manga.id = ${widget.manga.id}',
                       style: const TextStyle(color: Colors.white54),
                     ),
-                    if (!isQiscans) ...[
+                    if (!isRedirectOnly) ...[
                       if (_ensureError == null)
                         Text(
                           _ensured ? 'Chapter sync OK' : 'Ensuring chapters…',
@@ -198,8 +229,8 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                         ),
                       ],
                     ],
-                    if (isQiscans)
-                      _buildQiScansRedirectCard(context, manga)
+                    if (isRedirectOnly)
+                      _buildRedirectCard(context, manga)
                     else
                       StreamBuilder<List<FsChapter>>(
                         stream: context
@@ -262,8 +293,12 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     );
   }
 
-  Widget _buildQiScansRedirectCard(BuildContext context, Manga manga) {
-    final url = manga.sourceUrl ?? manga.qiscansSourceUrl ?? '';
+  Widget _buildRedirectCard(BuildContext context, Manga manga) {
+    final source = (manga.source ?? '').toLowerCase();
+    final sourceName = source == 'asurascans' ? 'Asura Scans' : 'QiScans';
+    final url = (manga.sourceUrl != null && manga.sourceUrl!.isNotEmpty)
+        ? manga.sourceUrl!
+        : (source == 'asurascans' ? manga.asurascansSourceUrl : manga.qiscansSourceUrl) ?? '';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(20),
@@ -279,9 +314,9 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
             children: [
               Icon(Icons.info_outline, color: Colors.blueAccent[100], size: 28),
               const SizedBox(width: 12),
-              const Text(
-                'Read on QiScans',
-                style: TextStyle(
+              Text(
+                'Read on $sourceName',
+                style: const TextStyle(
                   color: Colors.white,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -291,7 +326,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
           ),
           const SizedBox(height: 12),
           Text(
-            'In-app reading is temporarily unavailable for this title. You can read all chapters directly on QiScans.',
+            'In-app reading is temporarily unavailable for this title. You can read all chapters directly on $sourceName.',
             style: TextStyle(
               color: Colors.white.withOpacity(0.8),
               fontSize: 14,
@@ -314,9 +349,9 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                     ),
                     onPressed: () => _launchExternalUrl(context, url),
                     icon: const Icon(Icons.open_in_browser, size: 20),
-                    label: const Text(
-                      'Open on QiScans',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    label: Text(
+                      'Open on $sourceName',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                   ),
                 ),

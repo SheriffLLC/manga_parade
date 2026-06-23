@@ -17,6 +17,7 @@ class Manga {
   final String? source;
   final String? sourceUrl;
   final String? qiscansSourceUrl;
+  final String? asurascansSourceUrl;
   final int? qiscansPostId;
 
   const Manga({
@@ -33,6 +34,7 @@ class Manga {
     this.source,
     this.sourceUrl,
     this.qiscansSourceUrl,
+    this.asurascansSourceUrl,
     this.qiscansPostId,
   });
 
@@ -119,6 +121,7 @@ class Manga {
         source: json['source'] as String?,
         sourceUrl: json['sourceUrl'] as String?,
         qiscansSourceUrl: json['qiscansSourceUrl'] as String?,
+        asurascansSourceUrl: json['asurascansSourceUrl'] as String?,
         qiscansPostId: (json['qiscansPostId'] as num?)?.toInt(),
       );
     } catch (e, st) {
@@ -143,6 +146,7 @@ class Manga {
         'source': source,
         'sourceUrl': sourceUrl,
         'qiscansSourceUrl': qiscansSourceUrl,
+        'asurascansSourceUrl': asurascansSourceUrl,
         'qiscansPostId': qiscansPostId,
       };
 

@@ -106,6 +106,45 @@ class RailMangaCard extends StatelessWidget {
                 ),
               ),
 
+              if (manga.source != null && manga.source != 'mangadex')
+                Positioned(
+                  top: 8,
+                  left: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.75),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: Colors.blueAccent.withOpacity(0.6),
+                        width: 1,
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          manga.source == 'asurascans'
+                              ? 'Asura'
+                              : 'QiScans',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 3),
+                        const Icon(
+                          Icons.open_in_new,
+                          size: 10,
+                          color: Colors.blueAccent,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
               // Favorite button (top-right)
               Positioned(
                 top: 8,

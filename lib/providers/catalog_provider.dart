@@ -72,7 +72,7 @@ class CatalogProvider extends ChangeNotifier {
       if (existing == null) {
         unique[norm] = manga;
       } else {
-        // Merge the two Manga objects: prefer 'mangadex' over 'qiscans'
+        // Merge the two Manga objects: prefer 'mangadex' over redirect-only sources
         final preferNew = manga.source == 'mangadex' && existing.source != 'mangadex';
         final merged = Manga(
           id: preferNew ? manga.id : existing.id,
@@ -94,12 +94,18 @@ class CatalogProvider extends ChangeNotifier {
           source: preferNew ? manga.source : existing.source,
           sourceUrl: preferNew ? manga.sourceUrl : existing.sourceUrl,
           qiscansSourceUrl: manga.qiscansSourceUrl ?? existing.qiscansSourceUrl,
+          asurascansSourceUrl: manga.asurascansSourceUrl ?? existing.asurascansSourceUrl,
           qiscansPostId: manga.qiscansPostId ?? existing.qiscansPostId,
         );
         unique[norm] = merged;
       }
     }
-    return unique.values.toList();
+    
+    // Stable sort: Prioritize in-app readable titles (MangaDex) first
+    final result = unique.values.toList();
+    final inApp = result.where((m) => m.source == 'mangadex').toList();
+    final redirectOnly = result.where((m) => m.source != 'mangadex').toList();
+    return [...inApp, ...redirectOnly];
   }
 
   // -----------------------------

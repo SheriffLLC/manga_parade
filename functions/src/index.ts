@@ -26,7 +26,7 @@ app.use((req, res, next) => {
 });
 
 type RailType = "recent" | "popular";
-type SourceType = "qiscans" | "mangadex";
+type SourceType = "qiscans" | "mangadex" | "asurascans";
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
@@ -77,30 +77,11 @@ function cleanUrl(raw?: string | null): string {
   return u;
 }
 
-function absUrl(base: string, maybe: string): string {
-  if (!maybe) return "";
-  if (maybe.startsWith("http")) return maybe;
-  if (maybe.startsWith("//")) return `https:${maybe}`;
-  if (maybe.startsWith("/")) return `${base}${maybe}`;
-  return `${base}/${maybe}`;
-}
-
-function safeSlugFromUrl(url: string): string {
-  const parts = url.split("/").filter(Boolean);
-  return parts[parts.length - 1] || "unknown";
-}
-
 function isoToTimestamp(iso?: string): Timestamp | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
   return Timestamp.fromDate(d);
-}
-
-// QiScans cover alt looks like:
-// "Surviving As A Wandering Knight - MANHWA cover image"
-function extractTitleFromAlt(alt: string): string {
-  return alt.replace(/\s*-\s*.*?cover image\s*$/i, "").trim();
 }
 
 interface ChapterItem {
@@ -331,17 +312,16 @@ app.post("/manga/:mangaId/qiscansPostId", async (req, res) => {
 // - pinned: https://qiscans.org/pinned
 // -------------------------
 async function fetchQiscans(type: RailType, limit: number): Promise<RailItem[]> {
-  const base = "https://qiscans.org";
-  const url = type === "recent" ? `${base}/latest` : `${base}/pinned`;
+  const base = "https://qimanga.com";
 
-  const res = await fetch(url, {
+  const res = await fetch(base, {
     headers: {
-      "User-Agent": "MangaParadeBot/1.0 (+firebase-functions)",
+      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       "Accept": "text/html",
     },
   });
 
-  if (!res.ok) throw new Error(`Qiscans HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`Qimanga HTTP ${res.status}`);
 
   const html = await res.text();
   const $ = cheerio.load(html);
@@ -349,48 +329,107 @@ async function fetchQiscans(type: RailType, limit: number): Promise<RailItem[]> 
   const items: RailItem[] = [];
   const seen = new Set<string>();
 
-  // ✅ Only series cover images (prevents grabbing chapter "book" icon rows)
-  const imgEls = $("img[alt*=\"cover image\"]").toArray();
+  $('a').each((i, el) => {
+    const href = $(el).attr('href') || '';
+    if (href.startsWith('/series/') && !href.includes('/chapter-')) {
+      const slug = href.replace('/series/', '').split('/')[0];
+      if (!slug) return;
 
-  for (const imgEl of imgEls) {
-    if (items.length >= limit) break;
+      const docId = `qiscans_${slug}`;
+      if (seen.has(docId)) return;
+      seen.add(docId);
 
-    const img = $(imgEl);
+      // Find the image in this anchor or the parent/siblings
+      let img = $(el).find('img');
+      if (img.length === 0) {
+        img = $(el).siblings().find('img');
+      }
+      if (img.length === 0) {
+        img = $(el).closest('div').find('img');
+      }
 
-    const alt = (img.attr("alt") || "").trim();
-    const title = extractTitleFromAlt(alt) || "";
+      const title = img.attr('alt') || $(el).text().trim() || '';
+      const src = img.attr('src') || img.attr('data-src') || '';
+      const coverUrl = cleanUrl(src.startsWith('http') ? src : `${base}${src}`);
 
-    const rawImg = img.attr("src") || img.attr("data-src") || "";
-    const coverUrl = cleanUrl(absUrl(base, rawImg));
+      if (!title || !coverUrl || coverUrl.endsWith('.svg')) return;
 
-    // parent anchor usually points at /series/<slug>
-    const a = img.closest("a");
-    const href = (a.attr("href") || "").trim();
-    const sourceUrl = absUrl(base, href);
+      items.push({
+        id: docId,
+        title,
+        coverUrl,
+        sourceUrl: `${base}/series/${slug}`,
+        source: "qiscans",
+        catalogScore: type === "popular" ? 1000 : 0,
+      });
+    }
+  });
 
-    // Hard filters to avoid junk
-    if (!title) continue;
-    if (!coverUrl) continue;
-    if (coverUrl.endsWith(".svg")) continue;
-    if (!sourceUrl.includes("/series/")) continue; // avoid /chapter-* etc
-
-    const slug = safeSlugFromUrl(sourceUrl);
-    const docId = `qiscans_${slug}`;
-
-    if (seen.has(docId)) continue;
-    seen.add(docId);
-
-    items.push({
-      id: docId,
-      title,
-      coverUrl,
-      sourceUrl,
-      source: "qiscans",
-      catalogScore: type === "popular" ? 1000 : 0,
-    });
+  if (type === "popular") {
+    return items.slice(0, limit);
+  } else {
+    // Recent items appear after the top carousel/trending items
+    return items.slice(15, 15 + limit);
   }
+}
 
-  return items;
+// -------------------------
+// ASURASCANS SCRAPE (Redirect-only source)
+// -------------------------
+async function fetchAsurascans(type: RailType, limit: number): Promise<RailItem[]> {
+  const base = "https://asurascans.com";
+  try {
+    const res = await fetch(base, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html",
+      },
+    });
+
+    if (!res.ok) {
+      logger.warn(`Asura Scans fetch failed with status: ${res.status}. Bypassing.`);
+      return [];
+    }
+
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const items: RailItem[] = [];
+    const seen = new Set<string>();
+
+    $('a[href^="/comics/"]').each((i, el) => {
+      if (items.length >= limit) return;
+
+      const href = $(el).attr('href') || '';
+      const slug = href.replace('/comics/', '').split('/')[0];
+      if (!slug) return;
+      
+      const docId = `asurascans_${slug}`;
+      if (seen.has(docId)) return;
+      seen.add(docId);
+
+      const img = $(el).find('img');
+      const title = img.attr('alt') || $(el).text().trim().replace(/^[0-9.]+\s*/, '') || '';
+      const src = img.attr('src') || img.attr('data-src') || '';
+      if (!title || !src || src.endsWith('.svg')) return;
+
+      const coverUrl = cleanUrl(src.startsWith('http') ? src : `${base}${src}`);
+      const sourceUrl = `${base}/comics/${slug}`;
+
+      items.push({
+        id: docId,
+        title,
+        coverUrl,
+        sourceUrl,
+        source: "asurascans",
+        catalogScore: type === "popular" ? 900 : 0,
+      });
+    });
+
+    return items;
+  } catch (err) {
+    logger.warn("fetchAsurascans failed due to network or Cloudflare blocking", err);
+    return [];
+  }
 }
 
 // -------------------------
@@ -489,28 +528,58 @@ async function upsertMangaDocs(items: RailItem[], type: RailType) {
 
     // Prefer MangaDex as the primary source if either is MangaDex
     const isMangaDex = item.source === "mangadex" || existingData.source === "mangadex";
-    const primarySource = isMangaDex ? "mangadex" : "qiscans";
+    const isAsuraScans = item.source === "asurascans" || existingData.source === "asurascans";
+    const primarySource = isMangaDex ? "mangadex" : (isAsuraScans ? "asurascans" : "qiscans");
 
     let sourceUrl = item.sourceUrl;
     let qiscansSourceUrl = existingData.qiscansSourceUrl || undefined;
+    let asurascansSourceUrl = existingData.asurascansSourceUrl || undefined;
 
     if (item.source === "mangadex") {
       sourceUrl = item.sourceUrl;
       if (existingData.source === "qiscans") {
         qiscansSourceUrl = existingData.sourceUrl;
       }
+      if (existingData.source === "asurascans") {
+        asurascansSourceUrl = existingData.sourceUrl;
+      }
     } else if (item.source === "qiscans") {
       qiscansSourceUrl = item.sourceUrl;
       if (existingData.source === "mangadex") {
         sourceUrl = existingData.sourceUrl;
       }
+      if (existingData.source === "asurascans") {
+        asurascansSourceUrl = existingData.sourceUrl;
+      }
+    } else if (item.source === "asurascans") {
+      asurascansSourceUrl = item.sourceUrl;
+      if (existingData.source === "mangadex") {
+        sourceUrl = existingData.sourceUrl;
+      }
+      if (existingData.source === "qiscans") {
+        qiscansSourceUrl = existingData.sourceUrl;
+      }
     }
 
     const qiscansPostId = existingData.qiscansPostId || undefined;
 
+    const useMangadexMeta = (item.source === "mangadex") || (existingData.source === "mangadex");
+    const useAsuraScansMeta = !useMangadexMeta && ((item.source === "asurascans") || (existingData.source === "asurascans"));
+
+    let displayTitle = item.title;
+    let displayCover = item.coverUrl;
+
+    if (useMangadexMeta) {
+      displayTitle = item.source === "mangadex" ? item.title : existingData.title;
+      displayCover = item.source === "mangadex" ? item.coverUrl : existingData.coverUrl;
+    } else if (useAsuraScansMeta) {
+      displayTitle = item.source === "asurascans" ? item.title : existingData.title;
+      displayCover = item.source === "asurascans" ? item.coverUrl : existingData.coverUrl;
+    }
+
     const payload: Record<string, any> = {
-      title: isMangaDex ? (item.source === "mangadex" ? item.title : existingData.title) : item.title,
-      coverUrl: isMangaDex ? (item.source === "mangadex" ? item.coverUrl : existingData.coverUrl) : item.coverUrl,
+      title: displayTitle || item.title || "Untitled",
+      coverUrl: displayCover || item.coverUrl || "",
       sourceUrl: sourceUrl,
       source: primarySource,
       normalizedTitle: norm,
@@ -518,6 +587,7 @@ async function upsertMangaDocs(items: RailItem[], type: RailType) {
     };
 
     if (qiscansSourceUrl) payload.qiscansSourceUrl = qiscansSourceUrl;
+    if (asurascansSourceUrl) payload.asurascansSourceUrl = asurascansSourceUrl;
     if (qiscansPostId) payload.qiscansPostId = qiscansPostId;
 
     if (updatedAtTs) {
@@ -540,39 +610,179 @@ async function upsertMangaDocs(items: RailItem[], type: RailType) {
 }
 
 // -------------------------
-// Scheduled sync (main)
+// Database Clean-up & Sync Helpers
 // -------------------------
-export const syncRailsToFirestore = onSchedule("every 30 minutes", async () => {
+async function cleanupDuplicates(): Promise<number> {
+  const snap = await db.collection("manga").get();
+  const groups = new Map<string, any[]>();
+
+  for (const doc of snap.docs) {
+    const data = doc.data() || {};
+    const norm = data.normalizedTitle || normalizeTitle(data.title || "");
+    if (!norm) continue;
+
+    if (!groups.has(norm)) {
+      groups.set(norm, []);
+    }
+    groups.get(norm)!.push({ id: doc.id, ref: doc.ref, data });
+  }
+
+  let mergedCount = 0;
+
+  for (const [norm, docs] of groups.entries()) {
+    if (docs.length <= 1) continue;
+
+    logger.info(`Found ${docs.length} duplicates for normalized title: ${norm}`);
+
+    // Sort documents to choose the primary one
+    // Priority: mangadex > asurascans > qiscans
+    docs.sort((a, b) => {
+      const aId = a.id;
+      const bId = b.id;
+      if (aId.startsWith("mangadex_") && !bId.startsWith("mangadex_")) return -1;
+      if (bId.startsWith("mangadex_") && !aId.startsWith("mangadex_")) return 1;
+      if (aId.startsWith("asurascans_") && !bId.startsWith("asurascans_")) return -1;
+      if (bId.startsWith("asurascans_") && !aId.startsWith("asurascans_")) return 1;
+      return aId.localeCompare(bId);
+    });
+
+    const primary = docs[0];
+    const secondaries = docs.slice(1);
+
+    const mergedPayload = { ...primary.data };
+
+    for (const sec of secondaries) {
+      // Merge source URLs
+      if (sec.data.qiscansSourceUrl) mergedPayload.qiscansSourceUrl = sec.data.qiscansSourceUrl;
+      if (sec.data.asurascansSourceUrl) mergedPayload.asurascansSourceUrl = sec.data.asurascansSourceUrl;
+      if (sec.data.qiscansPostId) mergedPayload.qiscansPostId = sec.data.qiscansPostId;
+
+      if (sec.data.source === "qiscans" && !mergedPayload.qiscansSourceUrl) {
+        mergedPayload.qiscansSourceUrl = sec.data.sourceUrl;
+      }
+      if (sec.data.source === "asurascans" && !mergedPayload.asurascansSourceUrl) {
+        mergedPayload.asurascansSourceUrl = sec.data.sourceUrl;
+      }
+
+      // If primary is not mangadex and secondary is mangadex/asurascans, escalate source
+      if (mergedPayload.source !== "mangadex") {
+        if (sec.data.source === "mangadex") {
+          mergedPayload.source = "mangadex";
+          mergedPayload.sourceUrl = sec.data.sourceUrl;
+        } else if (mergedPayload.source !== "asurascans" && sec.data.source === "asurascans") {
+          mergedPayload.source = "asurascans";
+          mergedPayload.sourceUrl = sec.data.sourceUrl;
+        }
+      }
+
+      // Merge scores
+      if (sec.data.catalogScore && (!mergedPayload.catalogScore || sec.data.catalogScore > mergedPayload.catalogScore)) {
+        mergedPayload.catalogScore = sec.data.catalogScore;
+      }
+
+      // Merge description/genres if primary is missing them
+      if (!mergedPayload.description && sec.data.description) mergedPayload.description = sec.data.description;
+      if ((!mergedPayload.genres || mergedPayload.genres.length === 0) && sec.data.genres) mergedPayload.genres = sec.data.genres;
+
+      // Delete secondary doc and its chapters
+      try {
+        const oldChapters = await db.collection("manga").doc(sec.id).collection("chapters").get();
+        const deleteBatch = db.batch();
+        for (const chDoc of oldChapters.docs) {
+          deleteBatch.delete(chDoc.ref);
+        }
+        deleteBatch.delete(sec.ref);
+        await deleteBatch.commit();
+        logger.info(`Deleted secondary duplicate doc: ${sec.id}`);
+      } catch (err) {
+        logger.error(`Error deleting secondary duplicate doc: ${sec.id}`, err);
+      }
+    }
+
+    // Update primary doc with merged payload
+    await db.collection("manga").doc(primary.id).set(mergedPayload, { merge: true });
+    logger.info(`Updated primary doc with merged data: ${primary.id}`);
+    mergedCount++;
+  }
+
+  return mergedCount;
+}
+
+async function doSyncRails() {
   const recentLimit = 30;
   const popularLimit = 30;
 
-  logger.info("syncRailsToFirestore started", { recentLimit, popularLimit });
+  logger.info("doSyncRails started", { recentLimit, popularLimit });
 
   const [
     qRecent,
     qPopular,
     mdRecent,
     mdPopular,
+    asRecent,
+    asPopular,
   ] = await Promise.all([
     fetchQiscans("recent", recentLimit),
     fetchQiscans("popular", popularLimit),
     fetchMangadex("recent", recentLimit),
     fetchMangadex("popular", popularLimit),
+    fetchAsurascans("recent", recentLimit),
+    fetchAsurascans("popular", popularLimit),
   ]);
 
   await Promise.all([
     upsertMangaDocs(qRecent, "recent"),
     upsertMangaDocs(mdRecent, "recent"),
+    upsertMangaDocs(asRecent, "recent"),
     upsertMangaDocs(qPopular, "popular"),
     upsertMangaDocs(mdPopular, "popular"),
+    upsertMangaDocs(asPopular, "popular"),
   ]);
 
-  logger.info("syncRailsToFirestore complete", {
+  logger.info("doSyncRails complete");
+
+  return {
     qRecent: qRecent.length,
     qPopular: qPopular.length,
     mdRecent: mdRecent.length,
     mdPopular: mdPopular.length,
-  });
+    asRecent: asRecent.length,
+    asPopular: asPopular.length,
+  };
+}
+
+// ✅ Manual sync endpoint
+app.post("/sync-rails", async (req, res) => {
+  try {
+    const results = await doSyncRails();
+    res.json({ ok: true, results });
+  } catch (e: any) {
+    logger.error("POST /sync-rails failed", e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// ✅ Manual duplicate cleanup endpoint
+app.post("/cleanup-duplicates", async (req, res) => {
+  try {
+    const mergedCount = await cleanupDuplicates();
+    res.json({ ok: true, mergedCount });
+  } catch (e: any) {
+    logger.error("POST /cleanup-duplicates failed", e);
+    res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
+// -------------------------
+// Scheduled sync (main)
+// -------------------------
+export const syncRailsToFirestore = onSchedule("every 30 minutes", async () => {
+  try {
+    const results = await doSyncRails();
+    logger.info("syncRailsToFirestore success", results);
+  } catch (err) {
+    logger.error("syncRailsToFirestore failed", err);
+  }
 });
 
 export const api = onRequest(app);
@@ -612,7 +822,7 @@ export const syncTopChaptersBatch = onSchedule("every 2 hours", async () => {
     // Respect TTL
     const last = data.lastChaptersSyncedAt as Timestamp | undefined;
     if (last) {
-      const ttl = source === "qiscans" ? TTL_HOURS_QISCANS : TTL_HOURS_MANGADEX;
+      const ttl = (source === "qiscans" || source === "asurascans") ? TTL_HOURS_QISCANS : TTL_HOURS_MANGADEX;
       if (hoursAgo(last, ttl)) {
         skippedFresh++;
         continue;
@@ -621,8 +831,8 @@ export const syncTopChaptersBatch = onSchedule("every 2 hours", async () => {
 
     try {
       let chapters: ChapterItem[] = [];
-      if (source === "qiscans") {
-        logger.info("Skipping scheduled chapter sync for qiscans due to Cloudflare block", { mangaId });
+      if (source === "qiscans" || source === "asurascans") {
+        logger.info(`Skipping scheduled chapter sync for ${source} due to Cloudflare block`, { mangaId });
         continue;
       } else {
         chapters = await fetchMangadexChapters(sourceUrl);
@@ -691,6 +901,10 @@ async function fetchAndCreateMangadexMangaDoc(mangaId: string): Promise<{ source
       if (existingData.source === "qiscans") {
         qiscansSourceUrl = existingData.sourceUrl;
       }
+      let asurascansSourceUrl = existingData.asurascansSourceUrl || undefined;
+      if (existingData.source === "asurascans") {
+        asurascansSourceUrl = existingData.sourceUrl;
+      }
       const qiscansPostId = existingData.qiscansPostId || undefined;
 
       const payload: Record<string, any> = {
@@ -703,6 +917,7 @@ async function fetchAndCreateMangadexMangaDoc(mangaId: string): Promise<{ source
       };
 
       if (qiscansSourceUrl) payload.qiscansSourceUrl = qiscansSourceUrl;
+      if (asurascansSourceUrl) payload.asurascansSourceUrl = asurascansSourceUrl;
       if (qiscansPostId) payload.qiscansPostId = qiscansPostId;
 
       const updatedAtTs = isoToTimestamp(attrs.updatedAt) ?? Timestamp.now();
@@ -739,6 +954,7 @@ async function fetchAndCreateMangadexMangaDoc(mangaId: string): Promise<{ source
         lastSyncedAt: FieldValue.serverTimestamp(),
       };
       if (existingData.qiscansSourceUrl) payload.qiscansSourceUrl = existingData.qiscansSourceUrl;
+      if (existingData.asurascansSourceUrl) payload.asurascansSourceUrl = existingData.asurascansSourceUrl;
       if (existingData.qiscansPostId) payload.qiscansPostId = existingData.qiscansPostId;
       await db.collection("manga").doc(mangaId).set(payload, { merge: true });
     }
@@ -799,7 +1015,7 @@ export const syncChaptersToFirestore = onRequest((req, res) => {
       if (!force) {
         const last = data.lastChaptersSyncedAt as Timestamp | undefined;
         if (last) {
-          const ttl = source === "qiscans" ? TTL_HOURS_QISCANS : TTL_HOURS_MANGADEX;
+          const ttl = (source === "qiscans" || source === "asurascans") ? TTL_HOURS_QISCANS : TTL_HOURS_MANGADEX;
           const fresh = hoursAgo(last, ttl);
 
           if (fresh) {
@@ -830,8 +1046,8 @@ export const syncChaptersToFirestore = onRequest((req, res) => {
 
       // Scrape
       let chapters: ChapterItem[] = [];
-      if (source === "qiscans") {
-        return res.status(403).json({ error: "QiScans chapter sync is temporarily disabled due to Cloudflare blocks. Please read on QiScans website." });
+      if (source === "qiscans" || source === "asurascans") {
+        return res.status(403).json({ error: `${source === "qiscans" ? "QiScans" : "Asura Scans"} chapter sync is temporarily disabled due to Cloudflare blocks. Please read on their website.` });
       } else {
         chapters = await fetchMangadexChapters(sourceUrl);
       }
@@ -859,6 +1075,7 @@ export const railDebug = onRequest((req, res) => {
 
       let items: RailItem[] = [];
       if (source === "qiscans") items = await fetchQiscans(type, limit);
+      else if (source === "asurascans") items = await fetchAsurascans(type, limit);
       else items = await fetchMangadex(type, limit);
 
       res.json({ source, type, limit, count: items.length, items });
