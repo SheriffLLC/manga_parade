@@ -1,5 +1,5 @@
 import 'dart:developer' as developer;
-import 'dart:math';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Manga {
   final String id;
@@ -7,8 +7,18 @@ class Manga {
   final String coverUrl;
   final String description;
   final List<String> genres;
+
+  final int? catalogScore;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+
   final String? volumes;
   final String? chapters;
+  final String? source;
+  final String? sourceUrl;
+  final String? qiscansSourceUrl;
+  final String? asurascansSourceUrl;
+  final int? qiscansPostId;
 
   const Manga({
     required this.id,
@@ -16,9 +26,26 @@ class Manga {
     required this.coverUrl,
     this.description = '',
     this.genres = const [],
+    this.catalogScore,
+    this.createdAt,
+    this.updatedAt,
     this.volumes,
     this.chapters,
+    this.source,
+    this.sourceUrl,
+    this.qiscansSourceUrl,
+    this.asurascansSourceUrl,
+    this.qiscansPostId,
   });
+
+  static DateTime? _toDateTime(dynamic v) {
+    if (v == null) return null;
+    if (v is DateTime) return v;
+    if (v is Timestamp) return v.toDate();
+    if (v is int) return DateTime.fromMillisecondsSinceEpoch(v);
+    if (v is String) return DateTime.tryParse(v);
+    return null;
+  }
 
   factory Manga.fromJson(Map<String, dynamic>? json) {
     if (json == null) {
@@ -26,100 +53,111 @@ class Manga {
     }
 
     try {
-      // Handle MangaDex format
+      // MangaDex format (if you still use it)
       if (json['type'] == 'manga') {
-        final id = json['id'] as String;
-        final attributes = json['attributes'] as Map<String, dynamic>;
-        final relationships = json['relationships'] as List<dynamic>;
-        String? coverFileName;
+        final rawId = json['id'] as String;
+        final attributes = (json['attributes'] as Map<String, dynamic>?) ?? {};
+        final relationships = (json['relationships'] as List<dynamic>?) ?? [];
 
-        // Find cover art relationship
+        String? coverFileName;
         for (final rel in relationships) {
-          if (rel['type'] == 'cover_art') {
-            developer.log('Found cover_art relationship: $rel');
+          if (rel is Map && rel['type'] == 'cover_art') {
             final attrs = rel['attributes'];
-            if (attrs != null) {
+            if (attrs is Map) {
               coverFileName = attrs['fileName'] as String?;
-              developer.log('Cover filename: $coverFileName');
             }
             break;
           }
         }
 
-        // Get title in English or first available language
-        final titles = attributes['title'] as Map<String, dynamic>;
-        String title;
-        try {
-          title = titles['en'] ?? titles.values.firstWhere(
-            (v) => v != null && v.toString().isNotEmpty,
-            orElse: () => 'Unknown Title',
-          ) as String;
-        } catch (e) {
-          developer.log('Error getting title: $e\nTitles data: $titles');
-          title = 'Unknown Title';
-        }
+        final titles = (attributes['title'] as Map<String, dynamic>?) ?? {};
+        final title = (titles['en'] as String?) ??
+            titles.values
+                .where((v) => v != null && v.toString().isNotEmpty)
+                .map((v) => v.toString())
+                .cast<String>()
+                .firstOrNull ??
+            'Unknown Title';
 
-        final description = ((attributes['description'] as Map<String, dynamic>?)
-                    ?['en'] as String?) ??
-                'No description available';
+        final description = ((attributes['description']
+                as Map<String, dynamic>?)?['en'] as String?) ??
+            'No description available';
 
-        final mangaId = 'mangadex_$id';
+        final mangaId = 'mangadex_$rawId';
         final coverUrl = coverFileName != null
-            ? 'https://uploads.mangadex.org/covers/$id/$coverFileName'
+            ? 'https://uploads.mangadex.org/covers/$rawId/$coverFileName'
             : 'https://via.placeholder.com/200x300?text=No+Cover';
-
-        final genres = (attributes['genres'] as List<dynamic>?)
-            ?.map((e) => e as String)
-            .toList() ??
-            [];
 
         return Manga(
           id: mangaId,
           title: title,
           coverUrl: coverUrl,
           description: description,
-          genres: genres,
-          volumes: json['volumes'] as String?,
-          chapters: json['chapters'] as String?,
+          genres: const [],
+          source: 'mangadex',
+          sourceUrl: 'https://mangadex.org/title/$rawId',
         );
       }
 
-      // Handle regular format (e.g., from cache or reading history)
+      // Firestore / regular format
+      final id = (json['id'] as String?)?.trim();
+      final title = (json['title'] as String?)?.trim();
+      final coverUrl = (json['coverUrl'] as String?)?.trim();
+
       return Manga(
-        id: json['id'] as String? ?? 'unknown',
-        title: json['title'] as String? ?? 'Unknown Title',
-        coverUrl: json['coverUrl'] as String? ?? 'https://via.placeholder.com/200x300?text=No+Cover',
-        description: json['description'] as String? ?? 'No description available',
-        genres: (json['genres'] as List<dynamic>?)?.cast<String>() ?? [],
+        id: (id == null || id.isEmpty) ? 'unknown' : id,
+        title: (title == null || title.isEmpty) ? 'Unknown Title' : title,
+        coverUrl: (coverUrl == null || coverUrl.isEmpty)
+            ? 'https://via.placeholder.com/200x300?text=No+Cover'
+            : coverUrl,
+        description:
+            (json['description'] as String?) ?? 'No description available',
+        genres: (json['genres'] as List?)?.cast<String>() ?? const [],
+        catalogScore: (json['catalogScore'] as num?)?.toInt(),
+        createdAt: _toDateTime(json['createdAt']),
+        updatedAt: _toDateTime(json['updatedAt']),
         volumes: json['volumes'] as String?,
         chapters: json['chapters'] as String?,
+        source: json['source'] as String?,
+        sourceUrl: json['sourceUrl'] as String?,
+        qiscansSourceUrl: json['qiscansSourceUrl'] as String?,
+        asurascansSourceUrl: json['asurascansSourceUrl'] as String?,
+        qiscansPostId: (json['qiscansPostId'] as num?)?.toInt(),
       );
-    } catch (e, stackTrace) {
-      developer.log(
-        'Error parsing manga JSON: $e\nJSON: $json',
-        error: e,
-        stackTrace: stackTrace,
-      );
+    } catch (e, st) {
+      developer.log('Error parsing manga JSON: $e\nJSON: $json',
+          error: e, stackTrace: st);
       throw FormatException('Failed to parse manga data: $e');
     }
   }
 
+  /// IMPORTANT: make this JSON-encodable (no Timestamp objects)
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'title': title,
-    'coverUrl': coverUrl,
-    'description': description,
-    'genres': genres,
-    'volumes': volumes,
-    'chapters': chapters,
-  };
+        'id': id,
+        'title': title,
+        'coverUrl': coverUrl,
+        'description': description,
+        'genres': genres,
+        'catalogScore': catalogScore,
+        'createdAt': createdAt?.millisecondsSinceEpoch,
+        'updatedAt': updatedAt?.millisecondsSinceEpoch,
+        'volumes': volumes,
+        'chapters': chapters,
+        'source': source,
+        'sourceUrl': sourceUrl,
+        'qiscansSourceUrl': qiscansSourceUrl,
+        'asurascansSourceUrl': asurascansSourceUrl,
+        'qiscansPostId': qiscansPostId,
+      };
 
   @override
-  bool operator ==(Object other) {
-    if (identical(this, other)) return true;
-    return other is Manga && other.id == id;
-  }
+  bool operator ==(Object other) =>
+      identical(this, other) || other is Manga && other.id == id;
 
   @override
   int get hashCode => id.hashCode;
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }

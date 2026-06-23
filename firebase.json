@@ -1,0 +1,38 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "manga-world-project",
+          "appId": "1:546635380848:android:f34f1373e0bb5f14299cb5",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "manga-world-project",
+          "configurations": {
+            "android": "1:546635380848:android:f34f1373e0bb5f14299cb5",
+            "ios": "1:546635380848:ios:36dc57ede82859fc299cb5",
+            "macos": "1:546635380848:ios:36dc57ede82859fc299cb5",
+            "web": "1:546635380848:web:edd85b069b0a6a84299cb5"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}

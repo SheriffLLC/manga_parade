@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../models/manga.dart';
-import '../providers/manga_provider.dart';
+
+import '../providers/catalog_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../screens/manga_reader_screen.dart';
 import 'manga_card.dart';
@@ -16,14 +16,17 @@ class MangaGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<MangaProvider>(
+    return Consumer<CatalogProvider>(
       builder: (context, provider, child) {
-        final mangas = showOnlyFavorites 
-            ? provider.mangas.where(
-                (manga) => context.read<FavoritesProvider>().isFavorite(manga)
-              ).toList()
+        final favoritesProvider = context.read<FavoritesProvider>();
+
+        final mangas = showOnlyFavorites
+            ? provider.mangas
+                .where((manga) => favoritesProvider.isFavorite(manga))
+                .toList()
             : provider.mangas;
 
+        // Error state (when you already have items, we still show items)
         if (provider.error != null && mangas.isEmpty) {
           return SliverToBoxAdapter(
             child: Center(
@@ -39,7 +42,7 @@ class MangaGrid extends StatelessWidget {
                     ),
                     const SizedBox(height: 16),
                     ElevatedButton(
-                      onPressed: () => provider.fetchMangas(refresh: true),
+                      onPressed: () => provider.loadPopular(),
                       child: const Text('Retry'),
                     ),
                   ],
@@ -63,6 +66,7 @@ class MangaGrid extends StatelessWidget {
           );
         }
 
+        // Step 1: No pagination/infinite scroll yet for Firestore.
         return SliverGrid(
           gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: 2,
@@ -72,20 +76,6 @@ class MangaGrid extends StatelessWidget {
           ),
           delegate: SliverChildBuilderDelegate(
             (context, index) {
-              if (index >= mangas.length) {
-                if (provider.hasMorePages && !provider.isLoading) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    provider.fetchMangas();
-                  });
-                }
-                return const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(8.0),
-                    child: CircularProgressIndicator(),
-                  ),
-                );
-              }
-
               final manga = mangas[index];
               return MangaCard(
                 manga: manga,
@@ -99,7 +89,7 @@ class MangaGrid extends StatelessWidget {
                 },
               );
             },
-            childCount: provider.hasMorePages ? mangas.length + 1 : mangas.length,
+            childCount: mangas.length,
           ),
         );
       },

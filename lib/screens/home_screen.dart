@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/manga.dart';
-import '../providers/manga_provider.dart';
+import '../providers/catalog_provider.dart';
 import '../providers/favorites_provider.dart';
 import '../widgets/manga_grid.dart';
 import '../widgets/continue_reading_section.dart';
@@ -35,9 +35,7 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
     return [
       IconButton(
         icon: const Icon(Icons.clear),
-        onPressed: () {
-          query = '';
-        },
+        onPressed: () => query = '',
       ),
     ];
   }
@@ -46,9 +44,7 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
   Widget buildLeading(BuildContext context) {
     return IconButton(
       icon: const Icon(Icons.arrow_back),
-      onPressed: () {
-        close(context, null);
-      },
+      onPressed: () => close(context, null),
     );
   }
 
@@ -58,7 +54,7 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
       color: Colors.black87,
       child: Center(
         child: Text(
-          query.isEmpty 
+          query.isEmpty
               ? 'Enter a manga title to search'
               : 'Search results coming soon!',
           style: const TextStyle(color: Colors.white70),
@@ -73,7 +69,7 @@ class MangaSearchDelegate extends SearchDelegate<Manga?> {
       color: Colors.black87,
       child: Center(
         child: Text(
-          query.isEmpty 
+          query.isEmpty
               ? 'Enter a manga title to search'
               : 'Search suggestions coming soon!',
           style: const TextStyle(color: Colors.white70),
@@ -96,10 +92,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        context.read<MangaProvider>().fetchMangas(refresh: true);
-      }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final catalog = context.read<CatalogProvider>();
+      await catalog.refreshHome();
     });
   }
 
@@ -118,107 +115,223 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       child: Scaffold(
         backgroundColor: Colors.transparent,
-        body: Consumer<MangaProvider>(
+        body: Consumer<CatalogProvider>(
           builder: (context, provider, child) {
-            return CustomScrollView(
-              slivers: [
-                SliverAppBar(
-                  floating: true,
-                  snap: true,
-                  backgroundColor: Colors.transparent,
-                  title: const Text('Manga Parade'),
-                  actions: [
-                    IconButton(
-                      icon: Icon(
-                        _showOnlyFavorites ? Icons.favorite : Icons.favorite_border,
-                        color: _showOnlyFavorites ? Colors.red : null,
+            return RefreshIndicator(
+              onRefresh: provider.refreshHome,
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                slivers: [
+                  SliverAppBar(
+                    floating: true,
+                    snap: true,
+                    backgroundColor: Colors.transparent,
+                    title: const Text('Manga Parade'),
+                    actions: [
+                      IconButton(
+                        icon: Icon(
+                          _showOnlyFavorites
+                              ? Icons.favorite
+                              : Icons.favorite_border,
+                          color: _showOnlyFavorites ? Colors.red : null,
+                        ),
+                        onPressed: () {
+                          setState(
+                              () => _showOnlyFavorites = !_showOnlyFavorites);
+                        },
                       ),
-                      onPressed: () {
-                        setState(() {
-                          _showOnlyFavorites = !_showOnlyFavorites;
-                        });
-                      },
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.search),
-                      onPressed: () async {
-                        final selectedManga = await showSearch<Manga?>(
-                          context: context,
-                          delegate: MangaSearchDelegate(),
-                        );
-                        if (selectedManga != null && mounted) {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => MangaReaderScreen(
-                                manga: selectedManga,
-                              ),
-                            ),
+                      IconButton(
+                        icon: const Icon(Icons.search),
+                        onPressed: () async {
+                          final selectedManga = await showSearch<Manga?>(
+                            context: context,
+                            delegate: MangaSearchDelegate(),
                           );
-                        }
-                      },
+                          if (selectedManga != null && mounted) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    MangaReaderScreen(manga: selectedManga),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+
+                  // Continue Reading
+                  const SliverToBoxAdapter(child: ContinueReadingSection()),
+
+                  // Recently Updated (horizontal rail)
+                  SliverToBoxAdapter(
+                    child: _SectionHeader(
+                      title: 'Recently Updated',
+                      trailing: provider.isLoadingRecentlyUpdated
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : null,
                     ),
-                  ],
-                ),
-                if (provider.isLoading && provider.mangas.isEmpty)
-                  const SliverToBoxAdapter(
-                    child: Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(16.0),
-                        child: CircularProgressIndicator(),
+                  ),
+                  SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: 250,
+                      child: Builder(
+                        builder: (context) {
+                          if (provider.recentlyUpdatedError != null &&
+                              provider.recentlyUpdated.isEmpty) {
+                            return _InlineError(
+                              message: provider.recentlyUpdatedError!,
+                              onRetry: () => provider.loadRecentlyUpdated(),
+                            );
+                          }
+
+                          if (provider.isLoadingRecentlyUpdated &&
+                              provider.recentlyUpdated.isEmpty) {
+                            return const Center(
+                                child: CircularProgressIndicator());
+                          }
+
+                          if (provider.recentlyUpdated.isEmpty) {
+                            return const Center(
+                              child: Text(
+                                'Nothing yet (waiting on updates)',
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                            );
+                          }
+
+                          return ListView.separated(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            scrollDirection: Axis.horizontal,
+                            itemCount: provider.recentlyUpdated.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(width: 12),
+                            itemBuilder: (context, index) {
+                              final manga = provider.recentlyUpdated[index];
+                              final isFav = context
+                                  .read<FavoritesProvider>()
+                                  .isFavorite(manga);
+
+                              // If user toggled favorites-only, filter the rail too
+                              if (_showOnlyFavorites && !isFav) {
+                                return const SizedBox.shrink();
+                              }
+
+                              return SizedBox(
+                                width: 150,
+                                child: MangaCard(
+                                  manga: manga,
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (context) =>
+                                            MangaReaderScreen(manga: manga),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              );
+                            },
+                          );
+                        },
                       ),
                     ),
-                  )
-                else if (provider.error != null && provider.mangas.isEmpty)
-                  SliverToBoxAdapter(
-                    child: Center(
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              'Error loading manga: ${provider.error}',
-                              style: const TextStyle(color: Colors.red),
-                              textAlign: TextAlign.center,
-                            ),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: () => provider.fetchMangas(refresh: true),
-                              child: const Text('Retry'),
-                            ),
-                          ],
+                  ),
+
+                  // All Manga (grid)
+                  const SliverToBoxAdapter(
+                    child: _SectionHeader(title: 'All Manga'),
+                  ),
+
+                  if (provider.isLoading && provider.mangas.isEmpty)
+                    const SliverToBoxAdapter(
+                      child: Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: CircularProgressIndicator(),
                         ),
                       ),
-                    ),
-                  )
-                else ...[
-                  const SliverToBoxAdapter(
-                    child: ContinueReadingSection(),
-                  ),
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16.0,
-                        vertical: 8.0,
+                    )
+                  else if (provider.error != null && provider.mangas.isEmpty)
+                    SliverToBoxAdapter(
+                      child: _InlineError(
+                        message: provider.error!,
+                        onRetry: () => provider.loadPopular(),
                       ),
-                      child: Text(
-                        'Popular Manga',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
+                    )
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      sliver: MangaGrid(showOnlyFavorites: _showOnlyFavorites),
                     ),
-                  ),
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    sliver: MangaGrid(showOnlyFavorites: _showOnlyFavorites),
-                  ),
                 ],
-              ],
+              ),
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final Widget? trailing;
+
+  const _SectionHeader({
+    required this.title,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.titleLarge?.copyWith(
+          color: Colors.white,
+          fontWeight: FontWeight.bold,
+        );
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+      child: Row(
+        children: [
+          Expanded(child: Text(title, style: style)),
+          if (trailing != null) trailing!,
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineError extends StatelessWidget {
+  final String message;
+  final VoidCallback onRetry;
+
+  const _InlineError({
+    required this.message,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            Text(
+              message,
+              style: const TextStyle(color: Colors.red),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(onPressed: onRetry, child: const Text('Retry')),
+          ],
         ),
       ),
     );

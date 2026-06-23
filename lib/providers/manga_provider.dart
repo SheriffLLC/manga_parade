@@ -43,8 +43,7 @@ class MangaProvider with ChangeNotifier {
         'mangas': mangas.map((m) => m.toJson()).toList(),
       };
       await _prefs.setString(_cacheKey, json.encode(cacheData));
-    } catch (e) {
-    }
+    } catch (e) {}
   }
 
   Future<List<Manga>?> _loadFromCache() async {
@@ -55,7 +54,7 @@ class MangaProvider with ChangeNotifier {
       final cacheData = json.decode(cacheString) as Map<String, dynamic>;
       final timestamp = cacheData['timestamp'] as int;
       final now = DateTime.now().millisecondsSinceEpoch;
-      
+
       if (now - timestamp > _cacheDuration.inMilliseconds) {
         return null;
       }
@@ -85,7 +84,8 @@ class MangaProvider with ChangeNotifier {
         try {
           final titleElement = element.querySelector('.manga-title');
           final coverElement = element.querySelector('img');
-          final idMatch = element.querySelector('a')?.attributes['href']?.split('/').last;
+          final idMatch =
+              element.querySelector('a')?.attributes['href']?.split('/').last;
 
           if (titleElement != null && coverElement != null && idMatch != null) {
             mangas.add(Manga(
@@ -95,8 +95,7 @@ class MangaProvider with ChangeNotifier {
               description: '',
             ));
           }
-        } catch (e) {
-        }
+        } catch (e) {}
       }
 
       if (mangas.isNotEmpty) {
@@ -162,20 +161,18 @@ class MangaProvider with ChangeNotifier {
 
   Future<List<Manga>?> _fetchFromMangaDexApi() async {
     try {
-      final url = Uri.parse(
-        'https://api.mangadex.org/manga'
-        '?includes[]=cover_art'
-        '&contentRating[]=safe'
-        '&hasAvailableChapters=true'
-        '&order[followedCount]=desc'
-        '&limit=$_limit'
-        '&offset=${(_currentPage - 1) * _limit}'
-      );
+      final url = Uri.parse('https://api.mangadex.org/manga'
+          '?includes[]=cover_art'
+          '&contentRating[]=safe'
+          '&hasAvailableChapters=true'
+          '&order[followedCount]=desc'
+          '&limit=$_limit'
+          '&offset=${(_currentPage - 1) * _limit}');
 
       int maxRetries = 3;
       int currentTry = 0;
       http.Response? response;
-      
+
       while (currentTry < maxRetries) {
         try {
           response = await _client.get(
@@ -185,11 +182,11 @@ class MangaProvider with ChangeNotifier {
               'Accept': 'application/json',
             },
           );
-          
+
           if (response.statusCode != 500) {
             break;
           }
-          
+
           currentTry++;
           if (currentTry < maxRetries) {
             await Future.delayed(Duration(seconds: 1));
@@ -238,18 +235,16 @@ class MangaProvider with ChangeNotifier {
           ? mangaId.split('mangadex_').last
           : mangaId;
 
-      final url = Uri.parse(
-        'https://api.mangadex.org/manga/$cleanMangaId/feed'
-        '?translatedLanguage[]=en'
-        '&includes[]=scanlation_group'
-        '&order[chapter]=desc'
-        '&limit=500'
-      );
+      final url = Uri.parse('https://api.mangadex.org/manga/$cleanMangaId/feed'
+          '?translatedLanguage[]=en'
+          '&includes[]=scanlation_group'
+          '&order[chapter]=desc'
+          '&limit=500');
 
       int maxRetries = 3;
       int currentTry = 0;
       http.Response? response;
-      
+
       while (currentTry < maxRetries) {
         try {
           response = await _client.get(
@@ -259,15 +254,15 @@ class MangaProvider with ChangeNotifier {
               'Accept': 'application/json',
             },
           );
-          
+
           if (response.statusCode == 404) {
             return await _fetchChaptersFromFallback(mangaId);
           }
-          
+
           if (response.statusCode != 500) {
             break;
           }
-          
+
           currentTry++;
           if (currentTry < maxRetries) {
             await Future.delayed(Duration(seconds: 1));
@@ -290,13 +285,15 @@ class MangaProvider with ChangeNotifier {
       }
 
       final List<dynamic> chapterList = data['data'];
-      final chapters = chapterList.map((chapterData) => Chapter.fromJson(chapterData)).toList();
-      
+      final chapters = chapterList
+          .map((chapterData) => Chapter.fromJson(chapterData))
+          .toList();
+
       // Sort chapters by volume and chapter number
       chapters.sort((a, b) {
         final volumeCompare = (b.volume ?? '').compareTo(a.volume ?? '');
         if (volumeCompare != 0) return volumeCompare;
-        
+
         final aNum = double.tryParse(a.chapter ?? '') ?? 0;
         final bNum = double.tryParse(b.chapter ?? '') ?? 0;
         return bNum.compareTo(aNum);
@@ -318,7 +315,8 @@ class MangaProvider with ChangeNotifier {
         );
 
         if (response.statusCode != 200) {
-          throw Exception('Failed to load chapters from fallback: ${response.statusCode}');
+          throw Exception(
+              'Failed to load chapters from fallback: ${response.statusCode}');
         }
 
         final document = parser.parse(response.body);
@@ -332,10 +330,15 @@ class MangaProvider with ChangeNotifier {
             if (link != null) {
               final title = link.text.trim();
               final chapterUrl = link.attributes['href'] ?? '';
-              
+
               chapters.add(Chapter(
                 id: 'mangakakalot_$chapterUrl',
                 title: title,
+                sourceUrl: chapterUrl,
+                source: 'mangakakalot',
+                index: chapterNumber * 1000,
+                chapterNumber: chapterNumber.toString(),
+                publishedAt: null,
                 volume: null,
                 chapter: chapterNumber.toString(),
                 translatedLanguage: 'en',
@@ -343,43 +346,44 @@ class MangaProvider with ChangeNotifier {
                 publishAt: DateTime.now(),
                 pages: 0,
               ));
-              
+
               chapterNumber--;
             }
-          } catch (e) {
-          }
+          } catch (e) {}
         }
 
         return chapters;
       }
-      
+
       throw Exception('Unsupported manga source');
     } catch (e, stackTrace) {
       throw Exception('Failed to load chapters from all sources');
     }
   }
 
-  Future<void> _saveChapterPagesToCache(String chapterId, MangaPage mangaPage) async {
+  Future<void> _saveChapterPagesToCache(
+      String chapterId, MangaPage mangaPage) async {
     try {
       final cacheData = await _getChapterPagesCache();
-      
+
       // Add or update the chapter pages in the cache
       cacheData[chapterId] = {
         'timestamp': DateTime.now().millisecondsSinceEpoch,
         'data': mangaPage.toJson(),
       };
-      
+
       // Limit cache size to 20 most recent chapters
       if (cacheData.length > 20) {
         final sortedEntries = cacheData.entries.toList()
-          ..sort((a, b) => (b.value['timestamp'] as int).compareTo(a.value['timestamp'] as int));
-        
+          ..sort((a, b) => (b.value['timestamp'] as int)
+              .compareTo(a.value['timestamp'] as int));
+
         cacheData.clear();
         for (var i = 0; i < min(20, sortedEntries.length); i++) {
           cacheData[sortedEntries[i].key] = sortedEntries[i].value;
         }
       }
-      
+
       await _prefs.setString(_chapterPagesCache, json.encode(cacheData));
     } catch (e) {
       // Silently fail if caching doesn't work
@@ -392,32 +396,32 @@ class MangaProvider with ChangeNotifier {
   Future<MangaPage?> _loadChapterPagesFromCache(String chapterId) async {
     try {
       final cacheData = await _getChapterPagesCache();
-      
+
       if (!cacheData.containsKey(chapterId)) {
         return null;
       }
-      
+
       final chapterData = cacheData[chapterId];
       final timestamp = chapterData['timestamp'] as int;
       final now = DateTime.now().millisecondsSinceEpoch;
-      
+
       // Check if cache is still valid (not expired)
       if (now - timestamp > _cacheDuration.inMilliseconds) {
         return null;
       }
-      
+
       return MangaPage.fromJson(chapterData['data']);
     } catch (e) {
       return null;
     }
   }
-  
+
   Future<Map<String, dynamic>> _getChapterPagesCache() async {
     final cacheString = _prefs.getString(_chapterPagesCache);
     if (cacheString == null) {
       return {};
     }
-    
+
     try {
       return json.decode(cacheString) as Map<String, dynamic>;
     } catch (e) {
@@ -432,10 +436,11 @@ class MangaProvider with ChangeNotifier {
       if (cachedPages != null) {
         return cachedPages;
       }
-      
+
       // If not in cache or cache expired, fetch from API
-      final url = Uri.parse('https://api.mangadex.org/at-home/server/$chapterId');
-      
+      final url =
+          Uri.parse('https://api.mangadex.org/at-home/server/$chapterId');
+
       final response = await _client.get(
         url,
         headers: {
@@ -447,10 +452,10 @@ class MangaProvider with ChangeNotifier {
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final mangaPage = MangaPage.fromJson(data);
-        
+
         // Cache the fetched pages
         await _saveChapterPagesToCache(chapterId, mangaPage);
-        
+
         return mangaPage;
       } else {
         throw Exception('Failed to load chapter pages: ${response.statusCode}');
