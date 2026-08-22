@@ -93,7 +93,10 @@ class RecentlyUpdatedRail extends StatelessWidget {
                       final m = items[i];
                       return SizedBox(
                         width: cardWidth,
-                        child: RailMangaCard(manga: m),
+                        child: RailMangaCard(
+                          manga: m,
+                          heroPrefix: 'recent_',
+                        ),
                       );
                     },
                   ),

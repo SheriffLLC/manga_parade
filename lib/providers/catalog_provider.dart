@@ -13,6 +13,7 @@ class CatalogProvider extends ChangeNotifier {
   bool _isLoading = false;
   bool _hasMore = true;
   String? _error;
+  bool _fetchingMangaDex = true;
 
   List<Manga> get mangas => List.unmodifiable(_mangas);
   bool get isLoading => _isLoading;
@@ -72,28 +73,63 @@ class CatalogProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      Query<Map<String, dynamic>> query = _db
-          .collection('manga')
-          .orderBy('catalogScore', descending: true)
-          .limit(pageSize);
+      int fetchedCount = 0;
+      bool hasMoreInQuery = true;
 
-      if (_lastDoc != null) {
-        query = query.startAfterDocument(_lastDoc!);
-      }
+      while (fetchedCount < pageSize && hasMoreInQuery) {
+        Query<Map<String, dynamic>> query;
+        final int limitAmount = pageSize - fetchedCount;
 
-      final snap = await query.get();
-
-      if (snap.docs.isNotEmpty) {
-        _lastDoc = snap.docs.last;
-
-        for (final doc in snap.docs) {
-          final map = _withDocIdAndCleanUrl(doc);
-          _mangas.add(Manga.fromJson(map));
+        if (_fetchingMangaDex) {
+          query = _db
+              .collection('manga')
+              .where('source', isEqualTo: 'mangadex')
+              .limit(limitAmount);
+        } else {
+          query = _db
+              .collection('manga')
+              .limit(limitAmount);
         }
-      }
 
-      if (snap.docs.length < pageSize) {
-        _hasMore = false;
+        if (_lastDoc != null) {
+          query = query.startAfterDocument(_lastDoc!);
+        }
+
+        final snap = await query.get();
+
+        if (snap.docs.isEmpty) {
+          hasMoreInQuery = false;
+        } else {
+          _lastDoc = snap.docs.last;
+
+          for (final doc in snap.docs) {
+            final data = doc.data();
+            final source = (data['source'] as String?)?.toLowerCase();
+
+            if (_fetchingMangaDex) {
+              final map = _withDocIdAndCleanUrl(doc);
+              _mangas.add(Manga.fromJson(map));
+              fetchedCount++;
+            } else {
+              // Non-MangaDex title
+              if (source != 'mangadex') {
+                final map = _withDocIdAndCleanUrl(doc);
+                _mangas.add(Manga.fromJson(map));
+                fetchedCount++;
+              }
+            }
+          }
+        }
+
+        if (snap.docs.length < limitAmount) {
+          if (_fetchingMangaDex) {
+            _fetchingMangaDex = false;
+            _lastDoc = null; // Reset pagination cursor to query from the start of the next phase
+          } else {
+            hasMoreInQuery = false;
+            _hasMore = false;
+          }
+        }
       }
     } catch (e) {
       _error = 'Failed to load manga catalog: $e';
@@ -114,16 +150,40 @@ class CatalogProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final snap = await _db
+      // 1. Fetch MangaDex recently updated (fetch 60 to filter for chapters in memory)
+      final mdSnap = await _db
+          .collection('manga')
+          .where('source', isEqualTo: 'mangadex')
+          .orderBy('updatedAt', descending: true)
+          .limit(60)
+          .get();
+
+      // 2. Fetch all recently updated (to extract non-MangaDex)
+      final allSnap = await _db
           .collection('manga')
           .orderBy('updatedAt', descending: true)
-          .limit(limit)
+          .limit(limit * 2)
           .get();
+
+      final mangadex = mdSnap.docs
+          .map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d)))
+          .where((m) => (m.chaptersCount ?? 0) > 0)
+          .take(limit)
+          .toList();
+
+      final others = allSnap.docs
+          .map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d)))
+          .where((m) => m.source?.toLowerCase() != 'mangadex')
+          .toList();
+
+      final combined = [...mangadex, ...others];
+      if (combined.length > limit) {
+        combined.removeRange(limit, combined.length);
+      }
 
       _recentlyUpdated
         ..clear()
-        ..addAll(
-            snap.docs.map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d))));
+        ..addAll(combined);
     } catch (e) {
       _recentlyUpdatedError = 'Failed to load Recently Updated: $e';
       debugPrint(_recentlyUpdatedError);
@@ -154,16 +214,42 @@ class CatalogProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final snap = await _db
+      // 1. Fetch MangaDex recently updated pool (fetch 100 to filter and shuffle)
+      final mdSnap = await _db
+          .collection('manga')
+          .where('source', isEqualTo: 'mangadex')
+          .orderBy('updatedAt', descending: true)
+          .limit(100)
+          .get();
+
+      // 2. Fetch popular non-MangaDex
+      final allSnap = await _db
           .collection('manga')
           .orderBy('catalogScore', descending: true)
-          .limit(limit)
+          .limit(limit * 2)
           .get();
+
+      final mangadexWithChapters = mdSnap.docs
+          .map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d)))
+          .where((m) => (m.chaptersCount ?? 0) > 0)
+          .toList();
+
+      mangadexWithChapters.shuffle(); // Randomized recs pool
+      final mangadex = mangadexWithChapters.take(limit).toList();
+
+      final others = allSnap.docs
+          .map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d)))
+          .where((m) => m.source?.toLowerCase() != 'mangadex')
+          .toList();
+
+      final combined = [...mangadex, ...others];
+      if (combined.length > limit) {
+        combined.removeRange(limit, combined.length);
+      }
 
       _mostPopular
         ..clear()
-        ..addAll(
-            snap.docs.map((d) => Manga.fromJson(_withDocIdAndCleanUrl(d))));
+        ..addAll(combined);
     } catch (e) {
       _mostPopularError = 'Failed to load Most Popular: $e';
     } finally {
@@ -299,6 +385,7 @@ class CatalogProvider extends ChangeNotifier {
     _mostPopular.clear();
     _lastDoc = null;
     _hasMore = true;
+    _fetchingMangaDex = true;
 
     await Future.wait([
       loadRecentlyUpdated(),

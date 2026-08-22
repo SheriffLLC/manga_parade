@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/manga.dart';
@@ -142,7 +143,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
       });
 
       final mangaProvider = context.read<MangaProvider>();
-      final mangaPage = await mangaProvider.fetchChapterPages(widget.chapter.id);
+      final mangaPage = await mangaProvider.fetchChapterPages(widget.manga.id, widget.chapter);
 
       if (!mounted) return;
 
@@ -267,7 +268,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
       backgroundColor: Colors.black,
       appBar: _showControls
           ? AppBar(
-              backgroundColor: Colors.black.withOpacity(0.7),
+              backgroundColor: Colors.black.withValues(alpha: 0.7),
               title: Text(widget.chapter.title),
               actions: [
                 IconButton(
@@ -309,26 +310,31 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Previous chapter button (newer chapter)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 16.0),
-                    child: _previousChapter != null
-                        ? ElevatedButton.icon(
-                            onPressed: _goToPreviousChapter,
-                            icon: const Icon(Icons.arrow_back),
-                            label: const Text('Newer Chapter'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.black.withOpacity(0.7),
-                            ),
-                          )
-                        : const SizedBox(width: 150),
+                  // Previous chapter button slot (newer chapter)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 16.0),
+                        child: _previousChapter != null
+                            ? ElevatedButton.icon(
+                                onPressed: _goToPreviousChapter,
+                                icon: const Icon(Icons.arrow_back),
+                                label: const Text('Newer'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.black.withValues(alpha: 0.7),
+                                ),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ),
                   ),
                   
                   // Page indicator
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.7),
+                      color: Colors.black.withValues(alpha: 0.7),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Text(
@@ -337,19 +343,24 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
                     ),
                   ),
                   
-                  // Next chapter button (older chapter)
-                  Padding(
-                    padding: const EdgeInsets.only(right: 16.0),
-                    child: _nextChapter != null
-                        ? ElevatedButton.icon(
-                            onPressed: _goToNextChapter,
-                            icon: const Icon(Icons.arrow_forward),
-                            label: const Text('Older Chapter'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.black.withOpacity(0.7),
-                            ),
-                          )
-                        : const SizedBox(width: 150),
+                  // Next chapter button slot (older chapter)
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: Padding(
+                        padding: const EdgeInsets.only(right: 16.0),
+                        child: _nextChapter != null
+                            ? ElevatedButton.icon(
+                                onPressed: _goToNextChapter,
+                                icon: const Icon(Icons.arrow_forward),
+                                label: const Text('Older'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.black.withValues(alpha: 0.7),
+                                ),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -379,6 +390,41 @@ class MangaImageWithSizeNotifier extends StatefulWidget {
 class _MangaImageWithSizeNotifierState extends State<MangaImageWithSizeNotifier> {
   @override
   Widget build(BuildContext context) {
+    final bool isLocal = widget.imageUrl.startsWith('file://') ||
+        (!widget.imageUrl.startsWith('http://') && !widget.imageUrl.startsWith('https://'));
+
+    if (isLocal) {
+      final cleanPath = widget.imageUrl.startsWith('file://') ? widget.imageUrl.substring(7) : widget.imageUrl;
+      return Image.file(
+        File(cleanPath),
+        fit: widget.fit,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (frame != null) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final RenderBox renderBox = context.findRenderObject() as RenderBox;
+              final size = renderBox.size;
+              widget.onSizeChanged(size);
+            });
+          }
+          return child;
+        },
+        errorBuilder: (context, error, stackTrace) {
+          const size = Size(300, 450);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            widget.onSizeChanged(size);
+          });
+          return Container(
+            width: size.width,
+            height: size.height,
+            color: Colors.grey[300],
+            child: const Center(
+              child: Text('Image failed to load'),
+            ),
+          );
+        },
+      );
+    }
+
     return Image.network(
       widget.imageUrl,
       fit: widget.fit,

@@ -14,6 +14,7 @@ class Manga {
 
   final String? volumes;
   final String? chapters;
+  final int? chaptersCount;
   final String? source;
   final String? sourceUrl;
   final int? qiscansPostId;
@@ -29,6 +30,7 @@ class Manga {
     this.updatedAt,
     this.volumes,
     this.chapters,
+    this.chaptersCount,
     this.source,
     this.sourceUrl,
     this.qiscansPostId,
@@ -114,7 +116,15 @@ class Manga {
         updatedAt: _toDateTime(json['updatedAt']),
         volumes: json['volumes'] as String?,
         chapters: json['chapters'] as String?,
-        source: json['source'] as String?,
+        chaptersCount: json['chaptersCount'] != null
+            ? (json['chaptersCount'] as num).toInt()
+            : null,
+        source: (json['source'] as String?) ??
+            ((id != null && id.startsWith('mangadex_'))
+                ? 'mangadex'
+                : (id != null && id.startsWith('comick_'))
+                    ? 'comick'
+                    : 'qiscans'),
         sourceUrl: json['sourceUrl'] as String?,
         qiscansPostId: (json['qiscansPostId'] as num?)?.toInt(),
       );
@@ -137,6 +147,7 @@ class Manga {
         'updatedAt': updatedAt?.millisecondsSinceEpoch,
         'volumes': volumes,
         'chapters': chapters,
+        'chaptersCount': chaptersCount,
         'source': source,
         'sourceUrl': sourceUrl,
         'qiscansPostId': qiscansPostId,

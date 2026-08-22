@@ -11,6 +11,9 @@ class RailMangaCard extends StatelessWidget {
   /// Optional: show a small subtitle (like "Updated today", "Ch. 120", etc.)
   final String? subtitle;
 
+  /// Optional: prefix to make Hero animations unique in subtrees
+  final String? heroPrefix;
+
   /// Optional override
   final VoidCallback? onTap;
 
@@ -18,12 +21,13 @@ class RailMangaCard extends StatelessWidget {
     super.key,
     required this.manga,
     this.subtitle,
+    this.heroPrefix,
     this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final heroTag = 'manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
+    final heroTag = '${heroPrefix ?? ''}manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
 
     return Material(
       color: Colors.transparent,

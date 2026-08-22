@@ -26,7 +26,7 @@ app.use((req, res, next) => {
 });
 
 type RailType = "recent" | "popular";
-type SourceType = "qiscans" | "mangadex";
+type SourceType = "qiscans" | "mangadex" | "comick";
 
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 
@@ -458,6 +458,102 @@ app.post("/manga/:mangaId/discover-qiscans-post-id", async (req, res) => {
   }
 });
 
+async function triggerApifyComickSync(callbackUrl: string, mangaId: string, sourceUrl: string) {
+  const token = process.env.APIFY_TOKEN;
+  if (!token) {
+    throw new Error("APIFY_TOKEN environment variable is not configured.");
+  }
+
+  const webhooks = [
+    {
+      eventTypes: ["ACTOR.RUN.SUCCEEDED"],
+      requestUrl: callbackUrl,
+      payloadTemplate: JSON.stringify({
+        runId: "{{resource.id}}",
+        datasetId: "{{resource.defaultDatasetId}}",
+        status: "{{resource.status}}",
+      }),
+    },
+  ];
+
+  const webhooksBase64 = Buffer.from(JSON.stringify(webhooks)).toString("base64");
+
+  const response = await axios.post(
+    `https://api.apify.com/v2/acts/panjan~comick-io/runs?token=${token}&webhooks=${webhooksBase64}`,
+    {
+      url: sourceUrl,
+      language: "en",
+      format: "cbz",
+    },
+    {
+      headers: {
+        "Content-Type": "application/json",
+      },
+      timeout: 20000,
+    }
+  );
+
+  return {
+    runId: response.data?.data?.id as string,
+  };
+}
+
+// POST /apify-webhook?mangaId=xxx
+app.post("/apify-webhook", async (req, res) => {
+  try {
+    const mangaId = String(req.query.mangaId || "").trim();
+    const { datasetId, status } = req.body;
+
+    if (!mangaId) return res.status(400).json({ error: "Missing mangaId" });
+    if (status !== "SUCCEEDED") {
+      logger.warn("Apify run did not succeed", { mangaId, status });
+      return res.status(200).json({ ok: false, message: "Run was not successful" });
+    }
+
+    const token = process.env.APIFY_TOKEN;
+    if (!token) {
+      logger.error("Missing APIFY_TOKEN environment variable in webhook");
+      return res.status(500).json({ error: "APIFY_TOKEN not configured" });
+    }
+
+    // Fetch dataset items
+    const datasetRes = await axios.get(
+      `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}`
+    );
+
+    const items = datasetRes.data;
+    if (!Array.isArray(items)) {
+      logger.warn("Apify dataset items is not an array", { mangaId, datasetId });
+      return res.status(200).json({ ok: false, message: "No items array" });
+    }
+
+    logger.info("Syncing comick chapters from Apify dataset", { mangaId, count: items.length });
+
+    // Format comick dataset items to ChapterItems
+    const chapters: ChapterItem[] = items.map((item: any, i: number): ChapterItem => {
+      const num = String(item.chapterNumber ?? "");
+      const title = item.title ? String(item.title) : (num ? `Chapter ${num}` : "Chapter");
+      const zipFileUrl = String(item.zipFileUrl || "");
+
+      return {
+        id: `comick_ch_${num || i + 1}`,
+        chapterNumber: num,
+        title,
+        sourceUrl: zipFileUrl, // Store the CBZ URL in sourceUrl
+        index: chapterIndex(num, 0) || (1000000 - i),
+      };
+    });
+
+    // Save/upsert chapters to Firestore
+    await upsertChapters(mangaId, "comick", chapters);
+
+    return res.json({ ok: true, mangaId, count: chapters.length });
+  } catch (e: any) {
+    logger.error("POST /apify-webhook failed", e);
+    return res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
 // -------------------------
 // QISCANS SCRAPE
 // You provided:
@@ -741,7 +837,11 @@ export const syncChaptersToFirestore = onRequest((req, res) => {
       if (!force) {
         const last = data.lastChaptersSyncedAt as Timestamp | undefined;
         if (last) {
-          const ttl = source === "qiscans" ? TTL_HOURS_QISCANS : TTL_HOURS_MANGADEX;
+          const ttl = source === "qiscans"
+            ? TTL_HOURS_QISCANS
+            : source === "comick"
+              ? 12 // 12 hours cooldown for comick Apify sync
+              : TTL_HOURS_MANGADEX;
           const fresh = hoursAgo(last, ttl);
 
           if (fresh) {
@@ -771,6 +871,23 @@ export const syncChaptersToFirestore = onRequest((req, res) => {
       }
 
       // Scrape
+      if (source === "comick") {
+        const protocol = req.protocol || "https";
+        const host = req.get ? req.get("host") : (req.headers.host || "");
+        const callbackUrl = `${protocol}://${host}/apify-webhook?mangaId=${encodeURIComponent(mangaId)}`;
+        const runInfo = await triggerApifyComickSync(callbackUrl, mangaId, sourceUrl);
+        return res.json({
+          ok: true,
+          mangaId,
+          source,
+          cached: false,
+          scraped: false,
+          status: "pending",
+          runId: runInfo.runId,
+          message: "Syncing chapters via Apify in the background.",
+        });
+      }
+
       let chapters: ChapterItem[] = [];
       if (source === "qiscans") {
         const postId = Number(data.qiscansPostId || 0);

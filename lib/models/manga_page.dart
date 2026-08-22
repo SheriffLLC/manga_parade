@@ -12,6 +12,14 @@ class MangaPage {
   factory MangaPage.fromJson(Map<String, dynamic> json) {
     try {
       final baseUrl = json['baseUrl'] as String;
+      if (baseUrl == 'file://') {
+        final urls = (json['pageUrls'] as List<dynamic>).cast<String>();
+        return MangaPage(
+          baseUrl: baseUrl,
+          pageUrls: urls,
+        );
+      }
+
       final chapter = json['chapter'] as Map<String, dynamic>;
       final hash = chapter['hash'] as String;
       final pages = chapter['data'] as List<dynamic>;
@@ -40,6 +48,13 @@ class MangaPage {
   }
 
   Map<String, dynamic> toJson() {
+    if (baseUrl == 'file://') {
+      return {
+        'baseUrl': baseUrl,
+        'pageUrls': pageUrls,
+      };
+    }
+
     // Extract hash and filenames from the URLs to reconstruct the structure
     // that matches what we receive from the API
     final firstUrl = pageUrls.isNotEmpty ? pageUrls[0] : '';

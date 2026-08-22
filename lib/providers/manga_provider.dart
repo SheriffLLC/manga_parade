@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:archive/archive.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:html/parser.dart' as parser;
 import '../models/manga.dart';
 import '../models/chapter.dart';
@@ -17,7 +20,7 @@ class MangaProvider with ChangeNotifier {
   static const int _limit = 32;
   bool _disposed = false;
   final _client = http.Client();
-  late SharedPreferences _prefs;
+  final SharedPreferences _prefs;
   static const String _cacheKey = 'manga_cache';
   static const String _chapterPagesCache = 'chapter_pages_cache';
   static const Duration _cacheDuration = Duration(hours: 24);
@@ -27,13 +30,7 @@ class MangaProvider with ChangeNotifier {
   String? get error => _error;
   bool get hasMorePages => _hasMorePages;
 
-  MangaProvider() {
-    _initSharedPreferences();
-  }
-
-  Future<void> _initSharedPreferences() async {
-    _prefs = await SharedPreferences.getInstance();
-  }
+  MangaProvider({required SharedPreferences prefs}) : _prefs = prefs;
 
   Future<void> _saveToCache(List<Manga> mangas) async {
     try {
@@ -152,7 +149,7 @@ class MangaProvider with ChangeNotifier {
       }
 
       throw Exception('Failed to load manga from all sources');
-    } catch (e, stackTrace) {
+    } catch (e) {
       _error = 'Error loading manga: $e';
     } finally {
       _setLoading(false, notify: notify);
@@ -300,7 +297,7 @@ class MangaProvider with ChangeNotifier {
       });
 
       return chapters;
-    } catch (e, stackTrace) {
+    } catch (e) {
       return await _fetchChaptersFromFallback(mangaId);
     }
   }
@@ -356,7 +353,7 @@ class MangaProvider with ChangeNotifier {
       }
 
       throw Exception('Unsupported manga source');
-    } catch (e, stackTrace) {
+    } catch (e) {
       throw Exception('Failed to load chapters from all sources');
     }
   }
@@ -410,7 +407,16 @@ class MangaProvider with ChangeNotifier {
         return null;
       }
 
-      return MangaPage.fromJson(chapterData['data']);
+      final mangaPage = MangaPage.fromJson(chapterData['data']);
+      if (mangaPage.baseUrl == 'file://') {
+        for (final path in mangaPage.pageUrls) {
+          if (!File(path).existsSync()) {
+            return null; // file was cleaned up by OS, force reload
+          }
+        }
+      }
+
+      return mangaPage;
     } catch (e) {
       return null;
     }
@@ -429,17 +435,81 @@ class MangaProvider with ChangeNotifier {
     }
   }
 
-  Future<MangaPage> fetchChapterPages(String chapterId) async {
+  Future<MangaPage> fetchChapterPages(String mangaId, Chapter chapter) async {
     try {
+      final String chapterId = chapter.id;
+
+      if (chapter.source == 'comick') {
+        // First check cache
+        final cachedPages = await _loadChapterPagesFromCache(chapterId);
+        if (cachedPages != null) {
+          return cachedPages;
+        }
+
+        final cbzUrl = chapter.sourceUrl;
+        if (cbzUrl.isEmpty) {
+          throw Exception('No CBZ download URL available for this chapter.');
+        }
+
+        // Download CBZ bytes
+        final response = await _client.get(Uri.parse(cbzUrl));
+        if (response.statusCode != 200) {
+          throw Exception('Failed to download CBZ: HTTP ${response.statusCode}');
+        }
+        final bytes = response.bodyBytes;
+
+        // Decode the ZIP
+        final archive = ZipDecoder().decodeBytes(bytes);
+
+        // Get temp directory
+        final tempDir = await getTemporaryDirectory();
+        final chapterDir = Directory('${tempDir.path}/chapters/$chapterId');
+        if (await chapterDir.exists()) {
+          await chapterDir.delete(recursive: true);
+        }
+        await chapterDir.create(recursive: true);
+
+        final pageFiles = <String>[];
+        for (final file in archive) {
+          if (file.isFile) {
+            final data = file.content as List<int>;
+            final outFile = File('${chapterDir.path}/${file.name}');
+            await outFile.create(recursive: true);
+            await outFile.writeAsBytes(data);
+            pageFiles.add(outFile.path);
+          }
+        }
+
+        // Sort files alphabetically/numerically
+        pageFiles.sort();
+
+        // Create MangaPage using local file paths
+        final mangaPage = MangaPage(
+          baseUrl: 'file://',
+          pageUrls: pageFiles,
+        );
+
+        // Cache the local page paths
+        await _saveChapterPagesToCache(chapterId, mangaPage);
+
+        return mangaPage;
+      }
+
+      // MangaDex
+      // Strip mangadex_ch_ prefix if present
+      final String cleanChapterId = chapterId.contains('mangadex_ch_')
+          ? chapterId.split('mangadex_ch_').last
+          : chapterId;
+
       // First check if we have this chapter cached
-      final cachedPages = await _loadChapterPagesFromCache(chapterId);
+      final cachedPages = await _loadChapterPagesFromCache(cleanChapterId);
       if (cachedPages != null) {
         return cachedPages;
       }
 
       // If not in cache or cache expired, fetch from API
       final url =
-          Uri.parse('https://api.mangadex.org/at-home/server/$chapterId');
+          Uri.parse('https://api.mangadex.org/at-home/server/$cleanChapterId');
 
       final response = await _client.get(
         url,
@@ -454,13 +524,13 @@ class MangaProvider with ChangeNotifier {
         final mangaPage = MangaPage.fromJson(data);
 
         // Cache the fetched pages
-        await _saveChapterPagesToCache(chapterId, mangaPage);
+        await _saveChapterPagesToCache(cleanChapterId, mangaPage);
 
         return mangaPage;
       } else {
         throw Exception('Failed to load chapter pages: ${response.statusCode}');
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       rethrow;
     }
   }

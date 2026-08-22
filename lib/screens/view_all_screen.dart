@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/manga.dart';
 import '../providers/catalog_provider.dart';
+import '../providers/reading_history_provider.dart';
 import '../widgets/manga_card.dart';
 
-enum ViewAllType { recentlyUpdated, mostPopular }
+enum ViewAllType { recentlyUpdated, mostPopular, continueReading }
 
 class ViewAllScreen extends StatefulWidget {
   final ViewAllType type;
@@ -23,27 +25,31 @@ class _ViewAllScreenState extends State<ViewAllScreen> {
   void initState() {
     super.initState();
 
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      final catalog = context.read<CatalogProvider>();
-      if (_isRecentlyUpdated) {
-        await catalog.resetRecentlyUpdatedAll();
-      } else {
-        await catalog.resetMostPopularAll();
-      }
-    });
+    if (widget.type != ViewAllType.continueReading) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        final catalog = context.read<CatalogProvider>();
+        if (_isRecentlyUpdated) {
+          await catalog.resetRecentlyUpdatedAll();
+        } else {
+          await catalog.resetMostPopularAll();
+        }
+      });
 
-    _controller.addListener(_onScroll);
+      _controller.addListener(_onScroll);
+    }
   }
 
   @override
   void dispose() {
-    _controller.removeListener(_onScroll);
+    if (widget.type != ViewAllType.continueReading) {
+      _controller.removeListener(_onScroll);
+    }
     _controller.dispose();
     super.dispose();
   }
 
   void _onScroll() {
-    if (!_controller.hasClients) return;
+    if (!_controller.hasClients || widget.type == ViewAllType.continueReading) return;
 
     final max = _controller.position.maxScrollExtent;
     final current = _controller.position.pixels;
@@ -67,20 +73,34 @@ class _ViewAllScreenState extends State<ViewAllScreen> {
   Widget build(BuildContext context) {
     final catalog = context.watch<CatalogProvider>();
 
-    final title = _isRecentlyUpdated ? 'Recently Updated' : 'Most Popular';
+    final String title;
+    final List<Manga> items;
+    final bool isLoading;
+    final bool hasMore;
+    final String? error;
 
-    final items = _isRecentlyUpdated
-        ? catalog.recentlyUpdatedAll
-        : catalog.mostPopularAll;
-    final isLoading = _isRecentlyUpdated
-        ? catalog.isLoadingRecentlyUpdatedAll
-        : catalog.isLoadingMostPopularAll;
-    final hasMore = _isRecentlyUpdated
-        ? catalog.hasMoreRecentlyUpdatedAll
-        : catalog.hasMoreMostPopularAll;
-    final error = _isRecentlyUpdated
-        ? catalog.recentlyUpdatedAllError
-        : catalog.mostPopularAllError;
+    if (widget.type == ViewAllType.continueReading) {
+      final historyProvider = context.watch<ReadingHistoryProvider>();
+      title = 'Continue Reading';
+      items = historyProvider.history.map((h) => h.manga).toList();
+      isLoading = false;
+      hasMore = false;
+      error = null;
+    } else {
+      title = _isRecentlyUpdated ? 'Recently Updated' : 'Most Popular';
+      items = _isRecentlyUpdated
+          ? catalog.recentlyUpdatedAll
+          : catalog.mostPopularAll;
+      isLoading = _isRecentlyUpdated
+          ? catalog.isLoadingRecentlyUpdatedAll
+          : catalog.isLoadingMostPopularAll;
+      hasMore = _isRecentlyUpdated
+          ? catalog.hasMoreRecentlyUpdatedAll
+          : catalog.hasMoreMostPopularAll;
+      error = _isRecentlyUpdated
+          ? catalog.recentlyUpdatedAllError
+          : catalog.mostPopularAllError;
+    }
 
     final isTablet = MediaQuery.of(context).size.shortestSide >= 600;
     final crossAxisCount = isTablet ? 4 : 2;
@@ -89,6 +109,10 @@ class _ViewAllScreenState extends State<ViewAllScreen> {
       appBar: AppBar(title: Text(title)),
       body: RefreshIndicator(
         onRefresh: () async {
+          if (widget.type == ViewAllType.continueReading) {
+            // No-op for local history
+            return;
+          }
           final c = context.read<CatalogProvider>();
           if (_isRecentlyUpdated) {
             await c.resetRecentlyUpdatedAll();
@@ -110,6 +134,16 @@ class _ViewAllScreenState extends State<ViewAllScreen> {
               );
             }
 
+            if (items.isEmpty && widget.type == ViewAllType.continueReading) {
+              return const Center(
+                child: Text(
+                  'No reading history yet. Start reading some manga!',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.white70, fontSize: 16),
+                ),
+              );
+            }
+
             if (items.isEmpty && isLoading) {
               return const Center(child: CircularProgressIndicator());
             }
@@ -126,7 +160,10 @@ class _ViewAllScreenState extends State<ViewAllScreen> {
               itemCount: items.length + 1, // footer slot
               itemBuilder: (context, index) {
                 if (index < items.length) {
-                  return MangaCard(manga: items[index]);
+                  return MangaCard(
+                    manga: items[index],
+                    heroPrefix: 'viewall_${widget.type.name}_',
+                  );
                 }
 
                 if (isLoading) {

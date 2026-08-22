@@ -8,6 +8,7 @@ import 'firebase_options.dart';
 import 'providers/catalog_provider.dart';
 import 'providers/chapters_providers.dart';
 import 'providers/favorites_provider.dart';
+import 'providers/manga_provider.dart';
 import 'providers/search_provider.dart';
 import 'providers/read_chapters_provider.dart';
 import 'providers/reading_history_provider.dart';
@@ -33,6 +34,7 @@ void main() async {
         ChangeNotifierProvider(create: (_) => CatalogProvider()),
         ChangeNotifierProvider(create: (_) => FavoritesProvider(prefs: prefs)),
         ChangeNotifierProvider(create: (_) => ChaptersProvider()),
+        ChangeNotifierProvider(create: (_) => MangaProvider(prefs: prefs)),
         ChangeNotifierProvider(
             create: (_) => SearchProvider(mangakakalotService)),
         ChangeNotifierProvider(
@@ -55,13 +57,13 @@ class MyApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.transparent,
         appBarTheme: AppBarTheme(
-          backgroundColor: Colors.black.withOpacity(0.3),
+          backgroundColor: Colors.black.withValues(alpha: 0.3),
           elevation: 0,
         ),
 
         // IMPORTANT: Flutter expects CardThemeData (not CardTheme)
         cardTheme: CardThemeData(
-          color: Colors.black.withOpacity(0.5),
+          color: Colors.black.withValues(alpha: 0.5),
           elevation: 4,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),

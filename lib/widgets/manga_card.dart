@@ -9,17 +9,19 @@ class MangaCard extends StatelessWidget {
   final Manga manga;
   final VoidCallback? onTap;
   final String? subtitle;
+  final String? heroPrefix;
 
   const MangaCard({
     super.key,
     required this.manga,
     this.onTap,
     this.subtitle,
+    this.heroPrefix,
   });
 
   @override
   Widget build(BuildContext context) {
-    final heroTag = 'manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
+    final heroTag = '${heroPrefix ?? ''}manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
     return Card(
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(

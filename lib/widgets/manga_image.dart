@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:developer' as developer;
+import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 class MangaImage extends StatelessWidget {
@@ -68,6 +69,22 @@ class MangaImage extends StatelessWidget {
           errorBuilder: (_, __, ___) => _buildPlaceholder(title),
         );
       }
+    }
+
+    final bool isLocal = imageUrl.startsWith('file://') ||
+        (!imageUrl.startsWith('http://') && !imageUrl.startsWith('https://'));
+
+    if (isLocal) {
+      final cleanPath = imageUrl.startsWith('file://') ? imageUrl.substring(7) : imageUrl;
+      return Image.file(
+        File(cleanPath),
+        width: width,
+        height: height,
+        fit: fit,
+        errorBuilder: (_, __, ___) {
+          return _buildErrorWidget(context);
+        },
+      );
     }
 
     // For all other cases, try to load the image directly with better error handling

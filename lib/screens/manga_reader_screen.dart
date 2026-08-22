@@ -32,14 +32,14 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
       try {
         if (source == 'qiscans') {
           if (mounted) setState(() => _ensured = true);
-        } else if (source == 'mangadex') {
+        } else if (source == 'mangadex' || source == 'comick') {
           await context
               .read<ChaptersProvider>()
               .ensureChaptersIndexed(widget.manga.id);
           if (mounted) setState(() => _ensured = true);
         } else if (mounted) {
           setState(() {
-            _ensureError = 'In-app chapters are only available for MangaDex.';
+            _ensureError = 'In-app chapters are only available for MangaDex and ComicK.';
           });
         }
       } catch (e) {
@@ -99,6 +99,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     final heroTag = 'manga_cover_${manga.id}_${manga.coverUrl.hashCode}';
     final isQiscans = (manga.source ?? '').toLowerCase() == 'qiscans';
     final isMangadex = (manga.source ?? '').toLowerCase() == 'mangadex';
+    final isComick = (manga.source ?? '').toLowerCase() == 'comick';
 
     return Scaffold(
       body: Container(
@@ -210,7 +211,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                           label: const Text('Open on QiScans'),
                         ),
                       )
-                    else if (isMangadex)
+                    else if (isMangadex || isComick)
                       StreamBuilder<List<FsChapter>>(
                         stream: context
                             .watch<ChaptersProvider>()
@@ -237,6 +238,25 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                           final fsChapters =
                               snapshot.data ?? const <FsChapter>[];
                           if (fsChapters.isEmpty) {
+                            if (isComick) {
+                              return const Padding(
+                                padding: EdgeInsets.all(24),
+                                child: Center(
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      CircularProgressIndicator(),
+                                      SizedBox(height: 16),
+                                      Text(
+                                        'Syncing chapters from ComicK via Apify...\nThis takes about a minute. They will appear here automatically.',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(color: Colors.white70),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }
                             return const Padding(
                               padding: EdgeInsets.all(24),
                               child: Center(child: Text('No chapters found.')),
@@ -254,7 +274,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                               final ch = chapters[i];
                               return ListTile(
                                 title: Text(ch.title),
-                                subtitle: ch.chapterNumber.isEmpty
+                                subtitle: (ch.chapterNumber == null || ch.chapterNumber!.isEmpty)
                                     ? null
                                     : Text('Chapter ${ch.chapterNumber}'),
                                 onTap: () {
@@ -279,7 +299,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                         padding: EdgeInsets.all(24),
                         child: Center(
                           child: Text(
-                            'In-app chapters are available for MangaDex titles.',
+                            'In-app chapters are available for MangaDex and ComicK titles.',
                           ),
                         ),
                       ),

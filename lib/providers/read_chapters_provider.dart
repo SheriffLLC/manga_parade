@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/chapter.dart';
 
 class ReadChaptersProvider with ChangeNotifier {
   final SharedPreferences prefs;

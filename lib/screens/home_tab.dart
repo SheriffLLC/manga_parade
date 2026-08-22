@@ -13,18 +13,8 @@ class HomeTab extends StatelessWidget {
       children: const [
         SizedBox(height: 8),
 
-        // Keep Continue Reading first
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Text(
-            'Continue Reading',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
-          ),
-        ),
-        ContinueReadingGrid(),
+        ContinueReadingRail(),
 
-        // Rail should appear even if ContinueReadingGrid is empty
-        SizedBox(height: 12),
         RecentlyUpdatedRail(),
 
         SizedBox(height: 12),
