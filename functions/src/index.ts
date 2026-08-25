@@ -277,6 +277,9 @@ async function upsertChapters(mangaId: string, source: SourceType, chapters: Cha
     {
       chaptersCount: chapters.length,
       lastChaptersSyncedAt: FieldValue.serverTimestamp(),
+      chapterSyncStatus: "ready",
+      chapterSyncCompletedAt: FieldValue.serverTimestamp(),
+      chapterSyncError: null,
     },
     { merge: true }
   );
@@ -458,6 +461,117 @@ app.post("/manga/:mangaId/discover-qiscans-post-id", async (req, res) => {
   }
 });
 
+// POST /import-comick
+app.post("/import-comick", async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: "Missing url parameter" });
+    }
+
+    const slug = safeSlugFromUrl(url.trim());
+    if (!slug || slug === "unknown") {
+      return res.status(400).json({ error: "Invalid ComicK URL format" });
+    }
+
+    const mangaId = `comick_${slug}`;
+    const mangaRef = db.collection("manga").doc(mangaId);
+
+    logger.info(`[ComicK Import] url=${url}`);
+    logger.info(`[ComicK Import] mangaId=${mangaId}`);
+
+    // Call ComicK API directly to resolve metadata
+    let title = slug.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+    let coverUrl = "";
+    let description = "";
+
+    try {
+      const response = await axios.get(`https://api.comick.io/comic/${slug}`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+        },
+        timeout: 10000,
+      });
+
+      if (response.status === 200 && response.data) {
+        const comic = response.data.comic;
+        if (comic) {
+          title = comic.title || title;
+          description = comic.desc || "";
+
+          const b2key = comic.md_covers?.[0]?.b2key || comic.cover_url;
+          if (b2key) {
+            coverUrl = b2key.startsWith("http") ? b2key : `https://meo.comick.pictures/${b2key}`;
+          }
+        }
+      }
+    } catch (e: any) {
+      logger.warn(`[ComicK Import] API fetch metadata failed, using slug fallback: ${e.message || e}`);
+    }
+
+    if (!coverUrl) {
+      coverUrl = `https://via.placeholder.com/300x450/3498db/ffffff?text=${encodeURIComponent(title)}`;
+    }
+
+    const mangaDoc = {
+      title,
+      coverUrl,
+      description,
+      source: "comick",
+      sourceUrl: url,
+      chaptersCount: 0,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      catalogScore: 0,
+      lastSyncedAt: FieldValue.serverTimestamp(),
+
+      chapterSyncStatus: "not_started",
+      chapterSyncStartedAt: null,
+      chapterSyncCompletedAt: null,
+      chapterSyncError: null,
+    };
+
+    await mangaRef.set(mangaDoc, { merge: true });
+    logger.info(`[ComicK Import] Firestore parent created for ${mangaId}`);
+
+    const protocol = req.protocol || "https";
+    const host = req.get ? req.get("host") : (req.headers.host || "");
+    const callbackUrl = `${protocol}://${host}/apify-webhook?mangaId=${encodeURIComponent(mangaId)}`;
+
+    try {
+      await mangaRef.update({
+        chapterSyncStatus: "syncing",
+        chapterSyncStartedAt: FieldValue.serverTimestamp(),
+        chapterSyncError: null,
+      });
+
+      const runInfo = await triggerApifyComickSync(callbackUrl, mangaId, url);
+      logger.info(`[ComicK Sync] runId=${runInfo.runId}`);
+
+      await mangaRef.update({
+        apifyRunId: runInfo.runId,
+      });
+    } catch (e: any) {
+      logger.error(`[ComicK Sync] Trigger failed: ${e.message || e}`);
+      await mangaRef.update({
+        chapterSyncStatus: "failed",
+        chapterSyncError: String(e.message || e),
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      mangaId,
+      title,
+      chapterSyncStatus: "syncing",
+    });
+  } catch (e: any) {
+    logger.error("POST /import-comick failed", e);
+    return res.status(500).json({ error: String(e?.message || e) });
+  }
+});
+
 async function triggerApifyComickSync(callbackUrl: string, mangaId: string, sourceUrl: string) {
   const token = process.env.APIFY_TOKEN;
   if (!token) {
@@ -500,13 +614,17 @@ async function triggerApifyComickSync(callbackUrl: string, mangaId: string, sour
 
 // POST /apify-webhook?mangaId=xxx
 app.post("/apify-webhook", async (req, res) => {
+  const mangaId = String(req.query.mangaId || "").trim();
   try {
-    const mangaId = String(req.query.mangaId || "").trim();
     const { datasetId, status } = req.body;
 
     if (!mangaId) return res.status(400).json({ error: "Missing mangaId" });
     if (status !== "SUCCEEDED") {
       logger.warn("Apify run did not succeed", { mangaId, status });
+      await db.collection("manga").doc(mangaId).update({
+        chapterSyncStatus: "failed",
+        chapterSyncError: `Apify run status: ${status}`,
+      });
       return res.status(200).json({ ok: false, message: "Run was not successful" });
     }
 
@@ -522,12 +640,33 @@ app.post("/apify-webhook", async (req, res) => {
     );
 
     const items = datasetRes.data;
-    if (!Array.isArray(items)) {
-      logger.warn("Apify dataset items is not an array", { mangaId, datasetId });
-      return res.status(200).json({ ok: false, message: "No items array" });
+    if (!Array.isArray(items) || items.length === 0) {
+      logger.warn("Apify dataset items is empty or invalid", { mangaId, datasetId });
+      await db.collection("manga").doc(mangaId).update({
+        chapterSyncStatus: "failed",
+        chapterSyncError: "Apify run returned no items",
+      });
+      return res.status(200).json({ ok: false, message: "No items found" });
     }
 
     logger.info("Syncing comick chapters from Apify dataset", { mangaId, count: items.length });
+
+    // Try to update title metadata from the dataset items if they are present
+    const firstItem = items[0];
+    if (firstItem) {
+      const updateData: Record<string, any> = {};
+      const title = firstItem.comicTitle || firstItem.mangaTitle;
+      const cover = firstItem.comicCoverUrl || firstItem.coverUrl || firstItem.mangaCoverUrl;
+      const desc = firstItem.comicDescription || firstItem.description || firstItem.mangaDescription;
+
+      if (title) updateData.title = title;
+      if (cover) updateData.coverUrl = cover.startsWith("http") ? cover : `https://meo.comick.pictures/${cover}`;
+      if (desc) updateData.description = desc;
+
+      if (Object.keys(updateData).length > 0) {
+        await db.collection("manga").doc(mangaId).update(updateData);
+      }
+    }
 
     // Format comick dataset items to ChapterItems
     const chapters: ChapterItem[] = items.map((item: any, i: number): ChapterItem => {
@@ -550,6 +689,16 @@ app.post("/apify-webhook", async (req, res) => {
     return res.json({ ok: true, mangaId, count: chapters.length });
   } catch (e: any) {
     logger.error("POST /apify-webhook failed", e);
+    if (mangaId) {
+      try {
+        await db.collection("manga").doc(mangaId).update({
+          chapterSyncStatus: "failed",
+          chapterSyncError: String(e?.message || e),
+        });
+      } catch (inner) {
+        logger.error("Webhook inner update failed", inner);
+      }
+    }
     return res.status(500).json({ error: String(e?.message || e) });
   }
 });

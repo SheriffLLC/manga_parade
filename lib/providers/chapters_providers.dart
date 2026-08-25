@@ -16,9 +16,10 @@ class ChaptersProvider extends ChangeNotifier {
   // QiScans direct API base
   static const String qiscansApiBase = 'https://api.qiscans.org/api/v2';
 
-  Future<void> ensureChaptersIndexed(String mangaId) async {
+  Future<void> ensureChaptersIndexed(String mangaId, {bool force = false}) async {
     final uri = Uri.parse(syncChaptersBaseUrl).replace(queryParameters: {
       'mangaId': mangaId,
+      if (force) 'force': 'true',
     });
 
     final resp = await http.get(uri);

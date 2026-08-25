@@ -258,6 +258,61 @@ class _CatalogGridState extends State<CatalogGrid> {
       );
     }
 
+    if (displayed.isEmpty && !catalog.isLoading) {
+      final emptyState = widget.showOnlyFavorites
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: Text('No favorites yet', style: TextStyle(color: Colors.white70)),
+              ),
+            )
+          : (catalog.selectedSource == 'comick'
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24.0),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.menu_book, size: 64, color: Colors.greenAccent),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'No ComicK titles indexed yet.',
+                          style: TextStyle(color: Colors.white70, fontSize: 16),
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 16),
+                        ElevatedButton.icon(
+                          onPressed: () => _showImportComickDialog(context, catalog),
+                          icon: const Icon(Icons.add),
+                          label: const Text('Import ComicK URL'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green[800],
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(16.0),
+                    child: Text('No manga found', style: TextStyle(color: Colors.white70)),
+                  ),
+                ));
+
+      if (widget.showOnlyFavorites) {
+        return emptyState;
+      }
+
+      return Column(
+        children: [
+          _buildSourceFilterRow(context, catalog),
+          Expanded(child: emptyState),
+        ],
+      );
+    }
+
     final grid = RefreshIndicator(
       onRefresh: () => context.read<CatalogProvider>().refresh(),
       child: GridView.builder(
@@ -325,30 +380,134 @@ class _CatalogGridState extends State<CatalogGrid> {
       {'id': 'qiscans', 'label': 'QS'},
     ];
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
       child: Row(
-        children: sources.map((src) {
-          final isSelected = provider.selectedSource == src['id'];
-          return Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: ChoiceChip(
-              selected: isSelected,
-              label: Text(
-                src['label']!,
-                style: TextStyle(
-                  color: isSelected ? Colors.white : Colors.white70,
-                  fontSize: 12,
-                ),
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: sources.map((src) {
+                  final isSelected = provider.selectedSource == src['id'];
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8.0),
+                    child: ChoiceChip(
+                      selected: isSelected,
+                      label: Text(
+                        src['label']!,
+                        style: TextStyle(
+                          color: isSelected ? Colors.white : Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                      backgroundColor: Colors.white10,
+                      selectedColor: Theme.of(context).primaryColor,
+                      onSelected: (_) => provider.setSourceFilter(src['id']!),
+                    ),
+                  );
+                }).toList(),
               ),
-              backgroundColor: Colors.white10,
-              selectedColor: Theme.of(context).primaryColor,
-              onSelected: (_) => provider.setSourceFilter(src['id']!),
             ),
-          );
-        }).toList(),
+          ),
+          if (provider.selectedSource == 'comick')
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline, color: Colors.greenAccent),
+              tooltip: 'Import ComicK URL',
+              onPressed: () => _showImportComickDialog(context, provider),
+            ),
+        ],
       ),
+    );
+  }
+
+  void _showImportComickDialog(BuildContext context, CatalogProvider provider) {
+    final textController = TextEditingController();
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Import ComicK Title'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Enter ComicK manga URL:',
+                    style: TextStyle(fontSize: 14, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: textController,
+                    autofocus: true,
+                    enabled: !isSubmitting,
+                    decoration: const InputDecoration(
+                      hintText: 'https://comick.io/comic/00-sousou-no-frieren',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          final url = textController.text.trim();
+                          if (url.isEmpty || !url.contains('comick.io/comic/')) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Please enter a valid ComicK URL')),
+                            );
+                            return;
+                          }
+
+                          setState(() {
+                            isSubmitting = true;
+                          });
+
+                          try {
+                            await provider.importComicK(url);
+                            if (context.mounted) {
+                              Navigator.pop(dialogContext);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Successfully queued ComicK import!')),
+                              );
+                              // Refresh catalog
+                              provider.refresh();
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              setState(() {
+                                isSubmitting = false;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Import failed: ${e.toString().replaceAll('Exception: ', '')}')),
+                              );
+                            }
+                          }
+                        },
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Import'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

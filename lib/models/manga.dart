@@ -18,6 +18,10 @@ class Manga {
   final String? source;
   final String? sourceUrl;
   final int? qiscansPostId;
+  final String? chapterSyncStatus;
+  final DateTime? chapterSyncStartedAt;
+  final DateTime? chapterSyncCompletedAt;
+  final String? chapterSyncError;
 
   const Manga({
     required this.id,
@@ -34,6 +38,10 @@ class Manga {
     this.source,
     this.sourceUrl,
     this.qiscansPostId,
+    this.chapterSyncStatus,
+    this.chapterSyncStartedAt,
+    this.chapterSyncCompletedAt,
+    this.chapterSyncError,
   });
 
   static DateTime? _toDateTime(dynamic v) {
@@ -127,6 +135,10 @@ class Manga {
                     : 'qiscans'),
         sourceUrl: json['sourceUrl'] as String?,
         qiscansPostId: (json['qiscansPostId'] as num?)?.toInt(),
+        chapterSyncStatus: json['chapterSyncStatus'] as String?,
+        chapterSyncStartedAt: _toDateTime(json['chapterSyncStartedAt']),
+        chapterSyncCompletedAt: _toDateTime(json['chapterSyncCompletedAt']),
+        chapterSyncError: json['chapterSyncError'] as String?,
       );
     } catch (e, st) {
       developer.log('Error parsing manga JSON: $e\nJSON: $json',
@@ -151,6 +163,10 @@ class Manga {
         'source': source,
         'sourceUrl': sourceUrl,
         'qiscansPostId': qiscansPostId,
+        'chapterSyncStatus': chapterSyncStatus,
+        'chapterSyncStartedAt': chapterSyncStartedAt?.millisecondsSinceEpoch,
+        'chapterSyncCompletedAt': chapterSyncCompletedAt?.millisecondsSinceEpoch,
+        'chapterSyncError': chapterSyncError,
       };
 
   @override

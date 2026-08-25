@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/search_provider.dart';
+import '../providers/catalog_provider.dart';
 import '../widgets/manga_card.dart';
 
 class SearchScreen extends StatefulWidget {
@@ -107,36 +108,48 @@ class _SearchScreenState extends State<SearchScreen> {
                   {'id': 'qiscans', 'label': 'QS'},
                 ];
 
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(vertical: 4.0),
-                  child: Row(
-                    children: sources.map((src) {
-                      final isSelected = provider.selectedSource == src['id'];
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 8.0),
-                        child: ChoiceChip(
-                          selected: isSelected,
-                          label: Text(
-                            src['label']!,
-                            style: TextStyle(
-                              color: isSelected ? Colors.white : Colors.white70,
-                              fontSize: 12,
-                            ),
-                          ),
-                          backgroundColor: Colors.white10,
-                          selectedColor: Theme.of(context).primaryColor,
-                          onSelected: (_) {
-                            provider.setSourceFilter(src['id']!);
-                            final query = _searchController.text.trim();
-                            if (query.isNotEmpty) {
-                              provider.search(query);
-                            }
-                          },
+                return Row(
+                  children: [
+                    Expanded(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        padding: const EdgeInsets.symmetric(vertical: 4.0),
+                        child: Row(
+                          children: sources.map((src) {
+                            final isSelected = provider.selectedSource == src['id'];
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 8.0),
+                              child: ChoiceChip(
+                                selected: isSelected,
+                                label: Text(
+                                  src['label']!,
+                                  style: TextStyle(
+                                    color: isSelected ? Colors.white : Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                backgroundColor: Colors.white10,
+                                selectedColor: Theme.of(context).primaryColor,
+                                onSelected: (_) {
+                                  provider.setSourceFilter(src['id']!);
+                                  final query = _searchController.text.trim();
+                                  if (query.isNotEmpty) {
+                                    provider.search(query);
+                                  }
+                                },
+                              ),
+                            );
+                          }).toList(),
                         ),
-                      );
-                    }).toList(),
-                  ),
+                      ),
+                    ),
+                    if (provider.selectedSource == 'comick')
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline, color: Colors.greenAccent),
+                        tooltip: 'Import ComicK URL',
+                        onPressed: () => _showImportComickDialog(context),
+                      ),
+                  ],
                 );
               },
             ),
@@ -223,6 +236,38 @@ class _SearchScreenState extends State<SearchScreen> {
                   }
                   
                   if (provider.searchResults.isEmpty) {
+                    if (provider.selectedSource == 'comick') {
+                      final query = _searchController.text.trim();
+                      return Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.search_off, size: 48, color: Colors.white60),
+                              const SizedBox(height: 16),
+                              Text(
+                                query.isEmpty
+                                    ? 'No indexed ComicK titles yet.'
+                                    : 'No indexed ComicK titles match "$query"',
+                                style: const TextStyle(color: Colors.white70, fontSize: 15),
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                onPressed: () => _showImportComickDialog(context),
+                                icon: const Icon(Icons.add),
+                                label: const Text('Import ComicK URL'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.green[800],
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }
                     return const Center(
                       child: Text(
                         'No results found. Try a different search or genre.',
@@ -266,6 +311,100 @@ class _SearchScreenState extends State<SearchScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  void _showImportComickDialog(BuildContext context) {
+    final textController = TextEditingController();
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Import ComicK Title'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Enter ComicK manga URL:',
+                    style: TextStyle(fontSize: 14, color: Colors.white70),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: textController,
+                    autofocus: true,
+                    enabled: !isSubmitting,
+                    decoration: const InputDecoration(
+                      hintText: 'https://comick.io/comic/00-sousou-no-frieren',
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSubmitting ? null : () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: isSubmitting
+                      ? null
+                      : () async {
+                          final url = textController.text.trim();
+                          if (url.isEmpty || !url.contains('comick.io/comic/')) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Please enter a valid ComicK URL')),
+                            );
+                            return;
+                          }
+
+                          setState(() {
+                            isSubmitting = true;
+                          });
+
+                          try {
+                            // Call importComicK on CatalogProvider (since CatalogProvider holds import methods)
+                            await Provider.of<CatalogProvider>(context, listen: false).importComicK(url);
+                            if (context.mounted) {
+                              Navigator.pop(dialogContext);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Successfully queued ComicK import!')),
+                              );
+                              // Clear and re-search to locate new manga if query exists
+                              final query = _searchController.text.trim();
+                              if (query.isNotEmpty) {
+                                Provider.of<SearchProvider>(context, listen: false).search(query);
+                              }
+                            }
+                          } catch (e) {
+                            if (context.mounted) {
+                              setState(() {
+                                isSubmitting = false;
+                              });
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Import failed: ${e.toString().replaceAll('Exception: ', '')}')),
+                              );
+                            }
+                          }
+                        },
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Import'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 }

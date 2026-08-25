@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import '../models/manga.dart';
 
 class CatalogProvider extends ChangeNotifier {
@@ -31,6 +33,46 @@ class CatalogProvider extends ChangeNotifier {
     _fetchingMangaDex = (source == 'all' || source == 'mangadex');
     notifyListeners();
     fetchNextPage();
+  }
+
+  Stream<Manga> watchManga(String mangaId) {
+    return _db
+        .collection('manga')
+        .doc(mangaId)
+        .snapshots()
+        .map((doc) {
+          final data = doc.data();
+          if (data == null) {
+            throw Exception('Manga document not found');
+          }
+          return Manga.fromJson(data..['id'] = doc.id);
+        });
+  }
+
+  Future<void> importComicK(String url) async {
+    final uri = Uri.parse('https://api-uqirvwodma-uc.a.run.app/import-comick');
+    
+    final response = await http.post(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: jsonEncode({
+        'url': url.trim(),
+      }),
+    );
+
+    if (response.statusCode != 200) {
+      final body = response.body;
+      String errorMsg = 'Import failed';
+      try {
+        final decoded = jsonDecode(body);
+        if (decoded is Map && decoded.containsKey('error')) {
+          errorMsg = decoded['error'].toString();
+        }
+      } catch (_) {}
+      throw Exception(errorMsg);
+    }
   }
 
   // -----------------------------
