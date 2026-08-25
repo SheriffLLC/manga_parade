@@ -96,6 +96,50 @@ class _SearchScreenState extends State<SearchScreen> {
               },
               onChanged: _onSearchChanged,
             ),
+            const SizedBox(height: 12),
+            
+            Consumer<SearchProvider>(
+              builder: (context, provider, child) {
+                final sources = [
+                  {'id': 'all', 'label': 'All'},
+                  {'id': 'mangadex', 'label': 'MD'},
+                  {'id': 'comick', 'label': 'CK'},
+                  {'id': 'qiscans', 'label': 'QS'},
+                ];
+
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(vertical: 4.0),
+                  child: Row(
+                    children: sources.map((src) {
+                      final isSelected = provider.selectedSource == src['id'];
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 8.0),
+                        child: ChoiceChip(
+                          selected: isSelected,
+                          label: Text(
+                            src['label']!,
+                            style: TextStyle(
+                              color: isSelected ? Colors.white : Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          backgroundColor: Colors.white10,
+                          selectedColor: Theme.of(context).primaryColor,
+                          onSelected: (_) {
+                            provider.setSourceFilter(src['id']!);
+                            final query = _searchController.text.trim();
+                            if (query.isNotEmpty) {
+                              provider.search(query);
+                            }
+                          },
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                );
+              },
+            ),
             const SizedBox(height: 16),
             
             // Genre filter section with a title

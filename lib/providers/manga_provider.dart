@@ -511,25 +511,68 @@ class MangaProvider with ChangeNotifier {
       final url =
           Uri.parse('https://api.mangadex.org/at-home/server/$cleanChapterId');
 
-      final response = await _client.get(
-        url,
-        headers: {
-          'User-Agent': 'MangaParade/1.0.0',
-          'Accept': 'application/json',
-        },
-      );
+      int attempts = 0;
+      const int maxAttempts = 3;
+      int delaySeconds = 1;
+      http.Response? response;
+      dynamic lastError;
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final mangaPage = MangaPage.fromJson(data);
+      while (attempts < maxAttempts) {
+        attempts++;
+        try {
+          if (kDebugMode) {
+            print('[MangaDex Page Fetch] Attempt $attempts of $maxAttempts for chapter: $cleanChapterId');
+          }
+          response = await _client.get(
+            url,
+            headers: {
+              'User-Agent': 'MangaParade/1.0.0',
+              'Accept': 'application/json',
+            },
+          ).timeout(const Duration(seconds: 10));
 
-        // Cache the fetched pages
-        await _saveChapterPagesToCache(cleanChapterId, mangaPage);
+          final status = response.statusCode;
 
-        return mangaPage;
-      } else {
-        throw Exception('Failed to load chapter pages: ${response.statusCode}');
+          if (status == 200) {
+            break; // Success!
+          }
+
+          // Do not retry 4xx errors except 429 (Too Many Requests)
+          if (status >= 400 && status < 500 && status != 429) {
+            throw Exception('HTTP $status: Client Error');
+          }
+
+          throw Exception('HTTP $status');
+        } catch (e) {
+          lastError = e;
+          if (kDebugMode) {
+            print('[MangaDex Page Fetch Error] Attempt $attempts failed: $e');
+          }
+
+          if (attempts >= maxAttempts) {
+            break;
+          }
+
+          final backoffDuration = Duration(seconds: delaySeconds);
+          if (kDebugMode) {
+            print('[MangaDex Page Fetch] Retrying in $delaySeconds seconds...');
+          }
+          await Future.delayed(backoffDuration);
+          delaySeconds *= 2;
+        }
       }
+
+      if (response == null || response.statusCode != 200) {
+        throw Exception('Failed to load chapter pages after $maxAttempts attempts. Last error: $lastError');
+      }
+
+      final data = json.decode(response.body);
+      final mangaPage = MangaPage.fromJson(data);
+
+      // Cache the fetched pages
+      await _saveChapterPagesToCache(cleanChapterId, mangaPage);
+
+      return mangaPage;
     } catch (e) {
       rethrow;
     }

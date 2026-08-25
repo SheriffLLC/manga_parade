@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/manga.dart';
 import '../services/mangakakalot_service.dart';
 
@@ -15,21 +16,27 @@ class SearchProvider with ChangeNotifier {
   bool _isLoadingMore = false;
   String? _error;
   bool _hasMoreResults = true;
+  String _selectedSource = 'all';
   
-  // Common manga genres
   static const List<String> availableGenres = [
     'Action', 'Adventure', 'Comedy', 'Drama', 'Fantasy', 
     'Horror', 'Romance', 'School Life', 'Sci-fi', 'Slice of Life',
     'Sports', 'Supernatural'
   ];
-  
-  // Getters
+
   List<Manga> get searchResults => _searchResults;
   String? get selectedGenre => _selectedGenre;
   bool get isSearching => _isSearching;
   bool get isLoadingMore => _isLoadingMore;
   String? get error => _error;
   bool get hasMoreResults => _hasMoreResults;
+  String get selectedSource => _selectedSource;
+
+  void setSourceFilter(String source) {
+    if (_selectedSource == source) return;
+    _selectedSource = source;
+    notifyListeners();
+  }
 
   void _setSearching(bool value) {
     if (_isSearching != value) {
@@ -135,52 +142,99 @@ class SearchProvider with ChangeNotifier {
       _setSearching(true);
       _error = null;
 
-      final url = Uri.parse(
-        'https://api.mangadex.org/manga'
-        '?title=$query'
-        '&limit=20'
-        '&includes[]=cover_art'
-        '&contentRating[]=safe'
-        '&contentRating[]=suggestive'
-        '&availableTranslatedLanguage[]=en'
-        '&order[relevance]=desc'
-      );
+      List<Manga> apiResults = [];
+      List<Manga> firestoreResults = [];
 
-      final response = await http.Client().get(
-        url,
-        headers: {
-          'User-Agent': 'MangaParade/1.0.0',
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-      );
+      // 1. Fetch from MangaDex API if source is 'all' or 'mangadex'
+      if (_selectedSource == 'all' || _selectedSource == 'mangadex') {
+        final url = Uri.parse(
+          'https://api.mangadex.org/manga'
+          '?title=$query'
+          '&limit=20'
+          '&includes[]=cover_art'
+          '&contentRating[]=safe'
+          '&contentRating[]=suggestive'
+          '&availableTranslatedLanguage[]=en'
+          '&order[relevance]=desc'
+        );
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        
-        if (!data.containsKey('data')) {
-          throw Exception('Invalid response format: missing data field');
-        }
+        final response = await http.Client().get(
+          url,
+          headers: {
+            'User-Agent': 'MangaParade/1.0.0',
+            'Accept': 'application/json',
+            'Content-Type': 'application/json',
+          },
+        );
 
-        final List<dynamic> mangaList = data['data'];
-        
-        _searchResults = mangaList.map((mangaData) {
-          try {
-            return Manga.fromJson(mangaData);
-          } catch (e, stackTrace) {
-            rethrow;
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          if (data.containsKey('data')) {
+            final List<dynamic> mangaList = data['data'];
+            apiResults = mangaList.map((mangaData) {
+              try {
+                return Manga.fromJson(mangaData);
+              } catch (e) {
+                return null;
+              }
+            }).whereType<Manga>().toList();
           }
-        }).toList();
-        
-        _error = null;
-      } else {
-        throw Exception('Failed to search manga: ${response.statusCode}');
+        } else {
+          debugPrint('MangaDex API search failed: ${response.statusCode}');
+        }
       }
-    } catch (e, stackTrace) {
+
+      // 2. Fetch from Firestore if source is not 'mangadex'
+      if (_selectedSource != 'mangadex') {
+        firestoreResults = await _searchFirestore(query, source: _selectedSource);
+      }
+
+      // 3. Combine results
+      // Sort Firestore results to show first, followed by MangaDex remote results
+      _searchResults = [...firestoreResults, ...apiResults];
+      _error = null;
+    } catch (e) {
       _error = 'Error searching manga: $e';
       _searchResults = [];
     } finally {
       _setSearching(false);
+    }
+  }
+
+  Future<List<Manga>> _searchFirestore(String query, {String? source}) async {
+    try {
+      final db = FirebaseFirestore.instance;
+      Query<Map<String, dynamic>> baseQuery = db.collection('manga');
+      if (source != null && source != 'all') {
+        baseQuery = baseQuery.where('source', isEqualTo: source);
+      } else {
+        // For 'all' search source, we search for non-mangadex titles from firestore
+        // because mangadex is already searched via API.
+        baseQuery = baseQuery.where('source', isNotEqualTo: 'mangadex');
+      }
+
+      final snap = await baseQuery.get();
+      final results = <Manga>[];
+      final queryLower = query.toLowerCase();
+
+      for (final doc in snap.docs) {
+        final data = doc.data();
+        final title = (data['title'] as String?)?.toLowerCase() ?? '';
+        final desc = (data['description'] as String?)?.toLowerCase() ?? '';
+
+        if (title.contains(queryLower) || desc.contains(queryLower)) {
+          // Clean the cover url if needed
+          final map = {
+            ...data,
+            'id': doc.id,
+          };
+          results.add(Manga.fromJson(map));
+        }
+      }
+      return results;
+    } catch (e) {
+      debugPrint('Firestore search error: $e');
+      return [];
     }
   }
 

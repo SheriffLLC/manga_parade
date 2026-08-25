@@ -143,6 +143,11 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
       });
 
       final mangaProvider = context.read<MangaProvider>();
+      
+      // Diagnostic logging on opening chapter reader
+      final format = widget.chapter.source == 'comick' ? 'cbz' : 'network';
+      debugPrint('[Diagnostic] opening chapter_reader_screen source=${widget.chapter.source} format=$format');
+
       final mangaPage = await mangaProvider.fetchChapterPages(widget.manga.id, widget.chapter);
 
       if (!mounted) return;
@@ -293,9 +298,25 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
             Center(
               child: Padding(
                 padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  'Error loading pages: $_error',
-                  style: const TextStyle(color: Colors.white),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'Error loading pages:\n$_error',
+                      style: const TextStyle(color: Colors.red, fontSize: 16),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton.icon(
+                      onPressed: _loadPages,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             )
@@ -331,17 +352,18 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
                   ),
                   
                   // Page indicator
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.7),
-                      borderRadius: BorderRadius.circular(20),
+                  if (_mangaPage != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.7),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        'Page ${_currentPage + 1}/${_mangaPage?.pageCount ?? 0}',
+                        style: const TextStyle(color: Colors.white),
+                      ),
                     ),
-                    child: Text(
-                      'Page ${_currentPage + 1}/${_mangaPage?.pageCount ?? 0}',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
                   
                   // Next chapter button slot (older chapter)
                   Expanded(
@@ -388,6 +410,14 @@ class MangaImageWithSizeNotifier extends StatefulWidget {
 }
 
 class _MangaImageWithSizeNotifierState extends State<MangaImageWithSizeNotifier> {
+  int _retryKey = 0;
+
+  void _reload() {
+    setState(() {
+      _retryKey++;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isLocal = widget.imageUrl.startsWith('file://') ||
@@ -397,6 +427,7 @@ class _MangaImageWithSizeNotifierState extends State<MangaImageWithSizeNotifier>
       final cleanPath = widget.imageUrl.startsWith('file://') ? widget.imageUrl.substring(7) : widget.imageUrl;
       return Image.file(
         File(cleanPath),
+        key: ValueKey(_retryKey),
         fit: widget.fit,
         frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
           if (frame != null) {
@@ -413,20 +444,14 @@ class _MangaImageWithSizeNotifierState extends State<MangaImageWithSizeNotifier>
           WidgetsBinding.instance.addPostFrameCallback((_) {
             widget.onSizeChanged(size);
           });
-          return Container(
-            width: size.width,
-            height: size.height,
-            color: Colors.grey[300],
-            child: const Center(
-              child: Text('Image failed to load'),
-            ),
-          );
+          return _buildErrorWidget();
         },
       );
     }
 
     return Image.network(
       widget.imageUrl,
+      key: ValueKey(_retryKey),
       fit: widget.fit,
       frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
         if (frame != null) {
@@ -443,15 +468,57 @@ class _MangaImageWithSizeNotifierState extends State<MangaImageWithSizeNotifier>
         WidgetsBinding.instance.addPostFrameCallback((_) {
           widget.onSizeChanged(size);
         });
-        return Container(
-          width: size.width,
-          height: size.height,
-          color: Colors.grey[300],
-          child: const Center(
-            child: Text('Image failed to load'),
-          ),
-        );
+        return _buildErrorWidget();
       },
+    );
+  }
+
+  Widget _buildErrorWidget() {
+    return Center(
+      child: Container(
+        width: double.infinity,
+        height: 350,
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.grey[950],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.signal_wifi_connected_no_internet_4,
+              size: 32,
+              color: Colors.redAccent,
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Page failed to load',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton.icon(
+              onPressed: _reload,
+              icon: const Icon(Icons.refresh, size: 14),
+              label: const Text('Reload', style: TextStyle(fontSize: 11)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white10,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

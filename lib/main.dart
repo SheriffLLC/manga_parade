@@ -258,7 +258,7 @@ class _CatalogGridState extends State<CatalogGrid> {
       );
     }
 
-    return RefreshIndicator(
+    final grid = RefreshIndicator(
       onRefresh: () => context.read<CatalogProvider>().refresh(),
       child: GridView.builder(
         controller: _scrollController,
@@ -302,6 +302,52 @@ class _CatalogGridState extends State<CatalogGrid> {
 
           return const SizedBox.shrink();
         },
+      ),
+    );
+
+    if (widget.showOnlyFavorites) {
+      return grid;
+    }
+
+    return Column(
+      children: [
+        _buildSourceFilterRow(context, catalog),
+        Expanded(child: grid),
+      ],
+    );
+  }
+
+  Widget _buildSourceFilterRow(BuildContext context, CatalogProvider provider) {
+    final sources = [
+      {'id': 'all', 'label': 'All'},
+      {'id': 'mangadex', 'label': 'MD'},
+      {'id': 'comick', 'label': 'CK'},
+      {'id': 'qiscans', 'label': 'QS'},
+    ];
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+      child: Row(
+        children: sources.map((src) {
+          final isSelected = provider.selectedSource == src['id'];
+          return Padding(
+            padding: const EdgeInsets.only(right: 8.0),
+            child: ChoiceChip(
+              selected: isSelected,
+              label: Text(
+                src['label']!,
+                style: TextStyle(
+                  color: isSelected ? Colors.white : Colors.white70,
+                  fontSize: 12,
+                ),
+              ),
+              backgroundColor: Colors.white10,
+              selectedColor: Theme.of(context).primaryColor,
+              onSelected: (_) => provider.setSourceFilter(src['id']!),
+            ),
+          );
+        }).toList(),
       ),
     );
   }

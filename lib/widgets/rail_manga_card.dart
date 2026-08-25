@@ -139,8 +139,45 @@ class RailMangaCard extends StatelessWidget {
                   },
                 ),
               ),
+
+              // Source Badge (top-left)
+              Positioned(
+                top: 8,
+                left: 8,
+                child: _buildSourceBadge(manga.source),
+              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSourceBadge(String? source) {
+    if (source == null || source.isEmpty) return const SizedBox.shrink();
+
+    String label = 'MD';
+    Color color = Colors.blue;
+    if (source.toLowerCase() == 'comick') {
+      label = 'CK';
+      color = Colors.green;
+    } else if (source.toLowerCase() == 'qiscans') {
+      label = 'QS';
+      color = Colors.orange;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
         ),
       ),
     );

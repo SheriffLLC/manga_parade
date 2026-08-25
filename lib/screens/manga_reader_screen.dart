@@ -27,6 +27,9 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
 
     final source = (widget.manga.source ?? '').toLowerCase();
 
+    // Diagnostic logging
+    debugPrint('[Diagnostic] source=$source mangaId=${widget.manga.id}');
+
     // Kick off in-app chapter loading only for sources the reader supports.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       try {
@@ -274,9 +277,32 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                               final ch = chapters[i];
                               return ListTile(
                                 title: Text(ch.title),
-                                subtitle: (ch.chapterNumber == null || ch.chapterNumber!.isEmpty)
-                                    ? null
-                                    : Text('Chapter ${ch.chapterNumber}'),
+                                subtitle: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (ch.source.toLowerCase() == 'comick') ...[
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.withValues(alpha: 0.15),
+                                          borderRadius: BorderRadius.circular(4),
+                                          border: Border.all(color: Colors.green.withValues(alpha: 0.4)),
+                                        ),
+                                        child: const Text(
+                                          'CK • CBZ',
+                                          style: TextStyle(
+                                            color: Colors.greenAccent,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                    ],
+                                    if (ch.chapterNumber != null && ch.chapterNumber!.isNotEmpty)
+                                      Text('Chapter ${ch.chapterNumber}'),
+                                  ],
+                                ),
                                 onTap: () {
                                   Navigator.push(
                                     context,

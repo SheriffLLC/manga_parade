@@ -13,12 +13,25 @@ class CatalogProvider extends ChangeNotifier {
   bool _isLoading = false;
   bool _hasMore = true;
   String? _error;
+  String _selectedSource = 'all';
   bool _fetchingMangaDex = true;
 
   List<Manga> get mangas => List.unmodifiable(_mangas);
   bool get isLoading => _isLoading;
   bool get hasMore => _hasMore;
   String? get error => _error;
+  String get selectedSource => _selectedSource;
+
+  void setSourceFilter(String source) {
+    if (_selectedSource == source) return;
+    _selectedSource = source;
+    _mangas.clear();
+    _lastDoc = null;
+    _hasMore = true;
+    _fetchingMangaDex = (source == 'all' || source == 'mangadex');
+    notifyListeners();
+    fetchNextPage();
+  }
 
   // -----------------------------
   // RECENTLY UPDATED (rail)
@@ -80,15 +93,25 @@ class CatalogProvider extends ChangeNotifier {
         Query<Map<String, dynamic>> query;
         final int limitAmount = pageSize - fetchedCount;
 
-        if (_fetchingMangaDex) {
+        if (_selectedSource != 'all') {
           query = _db
               .collection('manga')
-              .where('source', isEqualTo: 'mangadex')
+              .where('source', isEqualTo: _selectedSource)
+              .orderBy('catalogScore', descending: true)
               .limit(limitAmount);
         } else {
-          query = _db
-              .collection('manga')
-              .limit(limitAmount);
+          if (_fetchingMangaDex) {
+            query = _db
+                .collection('manga')
+                .where('source', isEqualTo: 'mangadex')
+                .orderBy('catalogScore', descending: true)
+                .limit(limitAmount);
+          } else {
+            query = _db
+                .collection('manga')
+                .orderBy('catalogScore', descending: true)
+                .limit(limitAmount);
+          }
         }
 
         if (_lastDoc != null) {
@@ -106,25 +129,31 @@ class CatalogProvider extends ChangeNotifier {
             final data = doc.data();
             final source = (data['source'] as String?)?.toLowerCase();
 
-            if (_fetchingMangaDex) {
+            if (_selectedSource != 'all') {
               final map = _withDocIdAndCleanUrl(doc);
               _mangas.add(Manga.fromJson(map));
               fetchedCount++;
             } else {
-              // Non-MangaDex title
-              if (source != 'mangadex') {
+              if (_fetchingMangaDex) {
                 final map = _withDocIdAndCleanUrl(doc);
                 _mangas.add(Manga.fromJson(map));
                 fetchedCount++;
+              } else {
+                // Non-MangaDex title
+                if (source != 'mangadex') {
+                  final map = _withDocIdAndCleanUrl(doc);
+                  _mangas.add(Manga.fromJson(map));
+                  fetchedCount++;
+                }
               }
             }
           }
         }
 
         if (snap.docs.length < limitAmount) {
-          if (_fetchingMangaDex) {
+          if (_selectedSource == 'all' && _fetchingMangaDex) {
             _fetchingMangaDex = false;
-            _lastDoc = null; // Reset pagination cursor to query from the start of the next phase
+            _lastDoc = null; // Reset pagination cursor
           } else {
             hasMoreInQuery = false;
             _hasMore = false;
@@ -385,7 +414,7 @@ class CatalogProvider extends ChangeNotifier {
     _mostPopular.clear();
     _lastDoc = null;
     _hasMore = true;
-    _fetchingMangaDex = true;
+    _fetchingMangaDex = (_selectedSource == 'all' || _selectedSource == 'mangadex');
 
     await Future.wait([
       loadRecentlyUpdated(),
