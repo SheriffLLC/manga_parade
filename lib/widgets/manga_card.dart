@@ -49,6 +49,7 @@ class MangaCard extends StatelessWidget {
                     child: MangaImage(
                       imageUrl: manga.coverUrl,
                       fit: BoxFit.cover,
+                      isCover: true,
                     ),
                   ),
                   Positioned(

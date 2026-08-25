@@ -52,14 +52,94 @@ class CatalogProvider extends ChangeNotifier {
   Future<void> importComicK(String url) async {
     final uri = Uri.parse('https://api-uqirvwodma-uc.a.run.app/import-comick');
     
+    // Extract slug to query comick.dev API from the client (avoiding GCP Cloudflare block)
+    String? slug;
+    try {
+      final parsedUri = Uri.parse(url.trim());
+      final segments = parsedUri.pathSegments;
+      final comicIndex = segments.indexOf('comic');
+      if (comicIndex != -1 && segments.length > comicIndex + 1) {
+        slug = segments[comicIndex + 1];
+      } else if (url.contains('/comic/') && segments.isNotEmpty) {
+        slug = segments.last;
+      }
+    } catch (_) {}
+
+    Map<String, dynamic>? metadata;
+    if (slug != null && slug.isNotEmpty) {
+      try {
+        final comickApiUri = Uri.parse('https://api.comick.dev/comic/$slug');
+        final apiResponse = await http.get(
+          comickApiUri,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/120.0.0.0',
+            'Accept': 'application/json',
+          },
+        ).timeout(const Duration(seconds: 10));
+
+        if (apiResponse.statusCode == 200) {
+          final bodyData = jsonDecode(apiResponse.body);
+          final comic = bodyData['comic'];
+          if (comic != null) {
+            final title = comic['title']?.toString();
+            final description = comic['desc']?.toString() ?? '';
+            final comickId = comic['id'];
+            final publishingStatus = comic['status'];
+            
+            final List<dynamic>? mdTitles = comic['md_titles'];
+            final altTitles = mdTitles != null
+                ? mdTitles
+                    .map((t) => t['title']?.toString() ?? '')
+                    .where((t) => t.isNotEmpty)
+                    .toList()
+                : <String>[];
+
+            String coverUrl = '';
+            final List<dynamic>? mdCovers = comic['md_covers'];
+            if (mdCovers != null && mdCovers.isNotEmpty) {
+              final b2key = mdCovers[0]['b2key']?.toString();
+              if (b2key != null && b2key.trim().isNotEmpty) {
+                coverUrl = 'https://meo.comick.pictures/${b2key.trim()}';
+              }
+            }
+            if (coverUrl.isEmpty) {
+              final coverUrlVal = comic['cover_url']?.toString();
+              if (coverUrlVal != null && coverUrlVal.trim().isNotEmpty) {
+                coverUrl = coverUrlVal.trim();
+                if (!coverUrl.startsWith('http')) {
+                  coverUrl = 'https://meo.comick.pictures/$coverUrl';
+                }
+              }
+            }
+
+            metadata = {
+              'title': title,
+              'description': description,
+              'coverUrl': coverUrl,
+              'comickId': comickId,
+              'publishingStatus': publishingStatus,
+              'alternativeTitles': altTitles,
+            };
+          }
+        }
+      } catch (e) {
+        debugPrint('Client metadata fetch failed: $e');
+      }
+    }
+
+    final bodyPayload = <String, dynamic>{
+      'url': url.trim(),
+    };
+    if (metadata != null) {
+      bodyPayload['metadata'] = metadata;
+    }
+
     final response = await http.post(
       uri,
       headers: {
         'Content-Type': 'application/json',
       },
-      body: jsonEncode({
-        'url': url.trim(),
-      }),
+      body: jsonEncode(bodyPayload),
     );
 
     if (response.statusCode != 200) {

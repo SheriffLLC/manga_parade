@@ -150,6 +150,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
                         child: MangaImage(
                           imageUrl: manga.coverUrl,
                           fit: BoxFit.cover,
+                          isCover: true,
                         ),
                       ),
                     ),

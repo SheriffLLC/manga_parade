@@ -8,6 +8,7 @@ class MangaImage extends StatefulWidget {
   final double? width;
   final double? height;
   final BoxFit fit;
+  final bool isCover;
 
   const MangaImage({
     super.key,
@@ -15,6 +16,7 @@ class MangaImage extends StatefulWidget {
     this.width,
     this.height,
     this.fit = BoxFit.cover,
+    this.isCover = false,
   });
 
   @override
@@ -180,15 +182,15 @@ class _MangaImageState extends State<MangaImage> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.signal_wifi_connected_no_internet_4,
+            Icon(
+              widget.isCover ? Icons.image_not_supported : Icons.signal_wifi_connected_no_internet_4,
               size: 32,
               color: Colors.redAccent,
             ),
             const SizedBox(height: 8),
-            const Text(
-              'Page failed to load',
-              style: TextStyle(
+            Text(
+              widget.isCover ? 'Cover unavailable' : 'Page failed to load',
+              style: const TextStyle(
                 color: Colors.white,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
